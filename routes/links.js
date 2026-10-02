@@ -6,8 +6,25 @@ import { getUser, requireAdmin } from '../lib/auth.js';
 import { assertSafeUrl } from '../lib/validate.js';
 import { HttpError } from '../lib/errors.js';
 import { DEFAULT_LINKS } from '../lib/config.js';
+import { findIconUrl } from '../lib/thesvg.js';   // add to imports
 
 export const linksRouter = express.Router();
+
+linksRouter.post('/', getUser, requireAdmin, async (req, res) => {
+  const { title, url, icon, category, mode } = req.body ?? {};
+  if (!title || !url) throw new HttpError(400, 'Title and URL are required');
+  const safeUrl  = assertSafeUrl(url);
+  const safeMode = mode === 'tab' ? 'tab' : 'window';
+
+  // Only auto-detect when the admin left the icon blank
+  const finalIcon = (icon && String(icon).trim()) || await findIconUrl(String(title), safeUrl);
+
+  const { rows } = await pool.query(
+    'INSERT INTO shared_links (title, url, icon, category, mode) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+    [String(title), safeUrl, finalIcon, category || 'General', safeMode]
+  );
+  res.json({ id: Number(rows[0].id), ok: true, icon: finalIcon });
+});
 
 linksRouter.get('/', async (_req, res) => {
   const { rows } = await pool.query('SELECT * FROM shared_links ORDER BY category, title');
