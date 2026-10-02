@@ -1,7 +1,7 @@
 // routes/docker.js
 import express from 'express';
 import http from 'http';
-import { getUser } from '../lib/auth.js';
+import { getUser, requireAdmin } from '../lib/auth.js';
 import { HttpError } from '../lib/errors.js';
 
 export const dockerRouter = express.Router();
@@ -18,11 +18,12 @@ const TARGET = process.env.DS_HOST
     })()
   : { socketPath: process.env.DOCKER_SOCK || '/var/run/docker.sock' };
 
+  /*
 function requireAdmin(req, _res, next) {
   // Adjust if your admin flag lives somewhere else on req.user
   if (!req.user?.isAdmin) throw new HttpError(403, 'Admin permission required.');
   next();
-}
+}*/
 
 function dockerGet(path) {
   return new Promise((resolve, reject) => {

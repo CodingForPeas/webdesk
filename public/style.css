@@ -171,6 +171,8 @@ html, body {
   height: 22px;
   padding: 0 12px;
   border-radius: 20px;
+  width: 110px;
+  margin: 0 2px;
   cursor: pointer;
   font-family: 'Raleway', sans-serif;
   font-size: 11px;
