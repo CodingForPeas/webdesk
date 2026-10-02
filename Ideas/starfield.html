@@ -1,0 +1,68 @@
+<canvas id="starfield"></canvas>
+
+<script>
+(() => {
+  const cfg = {
+    density: 0.00012,      // stars per px² (tune up/down)
+    speed: 0.35,           // drift multiplier
+    colors: ['#ffffff', '#9ecbff', '#ffd479'], // random pick per star
+    bg: '#05060a',         // background color
+    twinkle: true,         // subtle opacity oscillation
+    maxStars: 400          // hard cap keeps it cheap on big screens
+  };
+
+  const canvas = document.getElementById('starfield');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  let stars = [], w = 0, h = 0, dpr = 1, raf = null;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    w = canvas.clientWidth; h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    seed();
+  }
+
+  function seed() {
+    const count = Math.min(Math.round(w * h * cfg.density), cfg.maxStars);
+    stars = Array.from({ length: count }, () => ({
+      x: Math.random() * w,
+      y: Math.random() * h,
+      z: Math.random() * 0.8 + 0.2,          // depth -> size & speed
+      c: cfg.colors[(Math.random() * cfg.colors.length) | 0],
+      p: Math.random() * Math.PI * 2          // twinkle phase
+    }));
+  }
+
+  function draw(t) {
+    ctx.fillStyle = cfg.bg;
+    ctx.fillRect(0, 0, w, h);
+    for (const s of stars) {
+      s.x += s.z * cfg.speed;                 // left-to-right drift
+      if (s.x > w + 2) { s.x = -2; s.y = Math.random() * h; }
+      const r = s.z * 1.6;
+      ctx.globalAlpha = cfg.twinkle ? 0.55 + 0.45 * Math.sin(t / 700 + s.p) : 1;
+      ctx.fillStyle = s.c;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r, 0, 6.283);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    raf = requestAnimationFrame(draw);
+  }
+
+  function start() { if (!raf) raf = requestAnimationFrame(draw); }
+  function stop() { cancelAnimationFrame(raf); raf = null; }
+
+  addEventListener('resize', resize);
+  document.addEventListener('visibilitychange', () => document.hidden ? stop() : start());
+
+  resize();
+  start();
+
+  // Expose for live tweaking from console: starfieldCfg.colors = [...];
+  window.starfieldCfg = cfg;
+})();
+</script>
+
+#starfield { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; display: block; }

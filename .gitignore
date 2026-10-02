@@ -1,0 +1,5 @@
+.env
+bin/
+flat_dir/
+node_modules/
+webdesk.tgz

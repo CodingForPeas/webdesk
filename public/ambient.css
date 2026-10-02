@@ -1,0 +1,277 @@
+/* ambient.css — import in index.html after style.css */
+
+/* ============================================================
+   @property declarations — required for CSS-animated gradient
+   positions (direct background-image animation is not possible).
+   Each theme declares its own property names to avoid collisions.
+   ============================================================ */
+
+/* -- Mesh Drift -- */
+@property --amb-md-x1 { syntax:'<percentage>'; inherits:false; initial-value:18%; }
+@property --amb-md-y1 { syntax:'<percentage>'; inherits:false; initial-value:24%; }
+@property --amb-md-x2 { syntax:'<percentage>'; inherits:false; initial-value:78%; }
+@property --amb-md-y2 { syntax:'<percentage>'; inherits:false; initial-value:70%; }
+@property --amb-md-x3 { syntax:'<percentage>'; inherits:false; initial-value:50%; }
+@property --amb-md-y3 { syntax:'<percentage>'; inherits:false; initial-value:78%; }
+@property --amb-md-x4 { syntax:'<percentage>'; inherits:false; initial-value:88%; }
+@property --amb-md-y4 { syntax:'<percentage>'; inherits:false; initial-value:72%; }
+@property --amb-md-x5 { syntax:'<percentage>'; inherits:false; initial-value:30%; }
+@property --amb-md-y5 { syntax:'<percentage>'; inherits:false; initial-value:52%; }
+
+@property --amb-td-x1 { syntax:'<percentage>'; inherits:false; initial-value:20%; }
+@property --amb-td-y1 { syntax:'<percentage>'; inherits:false; initial-value:30%; }
+@property --amb-td-x2 { syntax:'<percentage>'; inherits:false; initial-value:80%; }
+@property --amb-td-y2 { syntax:'<percentage>'; inherits:false; initial-value:60%; }
+
+@property --amb-em-x1 { syntax:'<percentage>'; inherits:false; initial-value:22%; }
+@property --amb-em-y1 { syntax:'<percentage>'; inherits:false; initial-value:20%; }
+@property --amb-em-x2 { syntax:'<percentage>'; inherits:false; initial-value:75%; }
+@property --amb-em-y2 { syntax:'<percentage>'; inherits:false; initial-value:75%; }
+@property --amb-em-x3 { syntax:'<percentage>'; inherits:false; initial-value:60%; }
+@property --amb-em-y3 { syntax:'<percentage>'; inherits:false; initial-value:25%; }
+
+/* ============================================================
+   Ambient mesh rendering — applies via .wp-ambient[data-amb-id]
+   ============================================================ */
+
+#wallpaper[data-kind="ambient"] {
+  background: var(--amb-base, #0f172a);
+  position: absolute; inset: 0; z-index: -1;
+}
+
+#wallpaper[data-kind="ambient"]::before {
+  content: '';
+  position: absolute;
+  inset: -15%;
+  filter: blur(56px) saturate(1.25);
+  mix-blend-mode: normal;
+}
+
+/* --- Mesh Drift --- */
+#wallpaper[data-amb-id="mesh-drift"]::before {
+  background:
+    radial-gradient(42% 52% at var(--amb-md-x1) var(--amb-md-y1), var(--amb-c1), transparent 62%),
+    radial-gradient(46% 44% at var(--amb-md-x2) var(--amb-md-y2), var(--amb-c2), transparent 60%),
+    radial-gradient(52% 50% at var(--amb-md-x3) var(--amb-md-y3), var(--amb-c3), transparent 62%),
+    radial-gradient(38% 42% at var(--amb-md-x4) var(--amb-md-y4), var(--amb-c4), transparent 58%),
+    radial-gradient(44% 46% at var(--amb-md-x5) var(--amb-md-y5), var(--amb-c5), transparent 60%);
+  animation: md-drift 28s cubic-bezier(.45,0,.55,1) infinite alternate;
+}
+@keyframes md-drift {
+  to {
+    --amb-md-x1:36%; --amb-md-y1:58%;
+    --amb-md-x2:60%; --amb-md-y2:32%;
+    --amb-md-x3:28%; --amb-md-y3:62%;
+    --amb-md-x4:66%; --amb-md-y4:86%;
+    --amb-md-x5:56%; --amb-md-y5:24%;
+  }
+}
+
+/* --- Tide --- */
+#wallpaper[data-amb-id="tide"]::before {
+  background:
+    radial-gradient(48% 50% at var(--amb-td-x1) var(--amb-td-y1), var(--amb-c1), transparent 64%),
+    radial-gradient(44% 48% at var(--amb-td-x2) var(--amb-td-y2), var(--amb-c2), transparent 60%);
+  animation: td-drift 34s cubic-bezier(.45,0,.55,1) infinite alternate;
+}
+@keyframes td-drift {
+  to {
+    --amb-td-x1:68%; --amb-td-y1:54%;
+    --amb-td-x2:30%; --amb-td-y2:28%;
+  }
+}
+
+/* --- Ember --- */
+#wallpaper[data-amb-id="ember"]::before {
+  background:
+    radial-gradient(42% 52% at var(--amb-em-x1) var(--amb-em-y1), var(--amb-c1), transparent 62%),
+    radial-gradient(46% 44% at var(--amb-em-x2) var(--amb-em-y2), var(--amb-c2), transparent 60%),
+    radial-gradient(52% 50% at var(--amb-em-x3) var(--amb-em-y3), var(--amb-c3), transparent 62%);
+  animation: em-drift 24s cubic-bezier(.45,0,.55,1) infinite alternate;
+}
+@keyframes em-drift {
+  to {
+    --amb-em-x1:62%; --amb-em-y1:68%;
+    --amb-em-x2:32%; --amb-em-y2:22%;
+    --amb-em-x3:78%; --amb-em-y3:56%;
+  }
+}
+
+/* ============================================================
+   Reduced motion: kill all ambient animations
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  #wallpaper[data-kind="ambient"]::before {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   Grain overlay (optional — adds texture to all wallpapers)
+   ============================================================ */
+#wallpaper::after {
+  content: '';
+  position: absolute; inset: 0; z-index: 0;
+  opacity: 0.18;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+  mix-blend-mode: overlay;
+}
+
+/* ============================================================
+   Aurora Borealis
+   ============================================================ */
+
+/* Registered properties for conic angle animation */
+@property --aur-a1 { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@property --aur-a2 { syntax: '<angle>'; inherits: false; initial-value: 60deg; }
+@property --aur-a3 { syntax: '<angle>'; inherits: false; initial-value: 120deg; }
+
+#wallpaper[data-amb-id="aurora"] {
+  background: #020510;
+  overflow: hidden;
+}
+
+/* Stars */
+#wallpaper[data-amb-id="aurora"]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1px 1px at 10% 15%, rgba(255,255,255,.8) 0%, transparent 100%),
+    radial-gradient(1px 1px at 25% 35%, rgba(255,255,255,.6) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 40% 10%, rgba(255,255,255,.9) 0%, transparent 100%),
+    radial-gradient(1px 1px at 55% 25%, rgba(255,255,255,.7) 0%, transparent 100%),
+    radial-gradient(1px 1px at 70%  5%, rgba(255,255,255,.8) 0%, transparent 100%),
+    radial-gradient(1px 1px at 80% 30%, rgba(255,255,255,.5) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 90% 15%, rgba(255,255,255,.7) 0%, transparent 100%),
+    radial-gradient(1px 1px at 15% 55%, rgba(255,255,255,.4) 0%, transparent 100%),
+    radial-gradient(1px 1px at 35% 70%, rgba(255,255,255,.3) 0%, transparent 100%),
+    radial-gradient(1px 1px at 60% 50%, rgba(255,255,255,.5) 0%, transparent 100%),
+    radial-gradient(1px 1px at 75% 65%, rgba(255,255,255,.4) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 5% 80%, rgba(255,255,255,.6) 0%, transparent 100%),
+    radial-gradient(1px 1px at 45% 88%, rgba(255,255,255,.5) 0%, transparent 100%),
+    radial-gradient(1px 1px at 95% 75%, rgba(255,255,255,.7) 0%, transparent 100%),
+    radial-gradient(1px 1px at 20% 92%, rgba(255,255,255,.4) 0%, transparent 100%),
+    radial-gradient(2px 2px at 85% 90%, rgba(255,255,255,.8) 0%, transparent 100%),
+    radial-gradient(1px 1px at 50% 45%, rgba(255,255,255,.6) 0%, transparent 100%),
+    radial-gradient(1px 1px at  3% 40%, rgba(255,255,255,.5) 0%, transparent 100%);
+  background-size: 100% 100%;
+  animation: aur-twinkle 6s ease-in-out infinite alternate;
+  mix-blend-mode: normal; /* override the grain overlay's mix-blend-mode */
+}
+
+@keyframes aur-twinkle {
+  0%   { opacity: .7; }
+  50%  { opacity: 1; }
+  100% { opacity: .5; }
+}
+
+/* Aurora curtain bands — sit in a pseudo on a child div
+   because ::before is already used by the ambient base rule */
+#wallpaper[data-amb-id="aurora"] .aur-bands {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  filter: blur(60px);
+  opacity: .75;
+  animation: aur-pulse 12s ease-in-out infinite alternate;
+  z-index: 0;
+}
+
+@keyframes aur-pulse {
+  0%   { opacity: .6;  filter: blur(60px); }
+  50%  { opacity: .85; filter: blur(50px); }
+  100% { opacity: .65; filter: blur(70px); }
+}
+
+.aur-band {
+  position: absolute;
+  width: 200%;
+  left: -50%;
+  border-radius: 50%;
+  transform-origin: center center;
+}
+
+.aur-band-1 {
+  height: 55vh;
+  top: -10vh;
+  background: conic-gradient(from var(--aur-a1) at 40% 60%,
+    transparent 0%,
+    rgba(0,255,200,.5) 15%,
+    rgba(0,170,255,.4) 30%,
+    transparent 45%,
+    rgba(170,68,255,.3) 60%,
+    transparent 75%
+  );
+  animation: aur-band1 18s linear infinite;
+}
+@keyframes aur-band1 { to { --aur-a1: 360deg; } }
+
+.aur-band-2 {
+  height: 60vh;
+  top: 5vh;
+  background: conic-gradient(from var(--aur-a2) at 60% 40%,
+    transparent 0%,
+    rgba(255,102,170,.4) 10%,
+    rgba(0,255,200,.3) 25%,
+    transparent 40%,
+    rgba(0,170,255,.5) 55%,
+    transparent 70%
+  );
+  animation: aur-band2 24s linear infinite reverse;
+}
+@keyframes aur-band2 { to { --aur-a2: 420deg; } }
+
+.aur-band-3 {
+  height: 50vh;
+  top: -5vh;
+  background: conic-gradient(from var(--aur-a3) at 30% 70%,
+    transparent 0%,
+    rgba(68,255,170,.4) 20%,
+    transparent 35%,
+    rgba(255,102,170,.3) 50%,
+    rgba(170,68,255,.4) 65%,
+    transparent 80%
+  );
+  animation: aur-band3 20s linear infinite;
+}
+@keyframes aur-band3 { to { --aur-a3: 480deg; } }
+
+/* Horizon fade */
+#wallpaper[data-amb-id="aurora"] .aur-horizon {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 30vh;
+  background: linear-gradient(to top,
+    rgba(0,20,15,.95) 0%,
+    rgba(0,50,30,.6)  40%,
+    transparent       100%
+  );
+  z-index: 2;
+}
+
+/* Mountain silhouette */
+#wallpaper[data-amb-id="aurora"] .aur-mountains {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 22vh;
+  z-index: 3;
+}
+#wallpaper[data-amb-id="aurora"] .aur-mountains svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .aur-bands,
+  .aur-band-1, .aur-band-2, .aur-band-3,
+  #wallpaper[data-amb-id="aurora"]::after {
+    animation: none;
+  }
+}

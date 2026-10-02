@@ -1,0 +1,1791 @@
+'use strict';
+
+import { THEMES } from '/wallpapers.mjs';
+
+// ================= Config =================
+const API = '/api';
+
+let state = {
+  user: null,
+  sharedLinks: [],
+  myLayout: [],
+  hiddenLinks: [],
+  wallpaper: null,                 // [CHANGED] was WALLPAPERS[0]; unused now that THEMES drives rendering
+  theme: localStorage.getItem('desktop_theme') || 'light',
+  nextX: 24, nextY: 24,
+  fmIconPos: { x: 24, y: 740 }
+};
+
+let zTop = 100001;
+let selectedIcon = null;
+let ctxTarget = null;
+let ctxPos = { x: 0, y: 0 };
+let suppressDesktopCtx = false;
+let csrfToken = null;    // [CHANGED] now owned by getCsrfToken/withCsrf only
+let csrfPending = null;
+
+const openWins = new Map();
+
+// DOM Elements
+const desktop = document.getElementById('desktop');
+const taskbar = document.getElementById('taskbar');
+const clock = document.getElementById('clock');
+const ctxmenu = document.getElementById('ctxmenu');
+const modalBg = document.getElementById('modal-bg');
+const wallpaperModal = document.getElementById('wallpaper-modal');
+const wallpaperEl = document.getElementById('wallpaper');
+const syncStatus = document.getElementById('sync-status');
+const FALLBACK_ICON = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🔗</text></svg>";
+
+// ================= Helpers =================
+function userIsAdmin() {
+  return !!(state.user && state.user.isAdmin);
+}
+
+function escapeHtml(s) {
+  const d = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return String(s).replace(/[&<>"']/g, c => d[c]);
+}
+
+function setStatus(msg, isError) {
+  syncStatus.textContent = msg;
+  syncStatus.className = isError ? 'error' : '';
+}
+
+function debounce(fn, ms) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
+const debouncedSaveLayout = debounce(() => saveLayoutWithStatus(), 500);
+
+function getNextPosition() {
+  const occupied = new Set();
+  state.myLayout.forEach(item => occupied.add(`${item.x},${item.y}`));
+
+  let x = 24, y = 24;
+  while (occupied.has(`${x},${y}`)) {
+    x += 90;
+    if (x > 250) { x = 24; y += 110; }
+    if (y > 1000) { x = 24; y = 24; break; }
+  }
+  return { x, y };
+}
+
+async function syncGuestLayoutToServer() {
+  if (!state.user) return;
+  const localData = localStorage.getItem('desktop_layout');
+  if (localData) {
+    try {
+      const parsed = JSON.parse(localData);
+      if (parsed.links && parsed.links.length > 0) {
+        const existingLayout = state.myLayout || [];
+        const existingIds = new Set(existingLayout.map(i => i.linkId));
+        parsed.links.forEach(item => {
+          if (!existingIds.has(item.linkId)) {
+            existingLayout.push(item);
+          }
+        });
+        state.myLayout = existingLayout;
+        await saveLayoutWithStatus();
+        localStorage.removeItem('desktop_layout');
+      }
+    } catch { /* ignore malformed data */ }
+  }
+}
+
+async function saveLayoutWithStatus() {
+  if (state.user) {
+    const res = await api('/layout', { method: 'POST', body: { links: state.myLayout, hiddenLinks: state.hiddenLinks || [] } });
+    if (!res) {
+      notify('error', 'Layout save failed', 'Could not sync your layout to the server.');
+    }
+    return res;
+  } else {
+    localStorage.setItem('desktop_layout', JSON.stringify({
+      links: state.myLayout,
+      hiddenLinks: state.hiddenLinks || []
+    }));
+    return { ok: true };
+  }
+}
+
+// ================= Icon resolution =================
+function getLayoutItem(linkId) {
+  return state.myLayout.find(i => i.linkId === linkId);
+}
+
+// Local override wins over the shared definition
+function resolveIcon(link) {
+  const item = getLayoutItem(link.id);
+  return item?.icon || link.icon || '';
+}
+
+async function setLocalIcon(link, iconUrl) {
+  let item = getLayoutItem(link.id);
+  if (!item) {
+    const free = getNextPosition();
+    item = { linkId: link.id, x: free.x, y: free.y };
+    state.myLayout.push(item);
+  }
+  if (iconUrl) {
+    item.icon = iconUrl;
+  } else {
+    delete item.icon;
+  }
+  const res = await saveLayoutWithStatus();
+  await renderIcons();
+  if (!res && item.icon) {
+    delete item.icon;
+    notify('error', 'Icon save failed', api._lastError || 'Unknown error');
+  }
+}
+
+// ================= CSRF Token Management =================   [CHANGED]
+let writeQueue = Promise.resolve();   // kept: serialises writes in case tokens are single-use
+
+async function fetchCsrfToken() {
+  const res = await fetch('/api/csrf-token');
+  if (!res.ok) throw new Error(`CSRF token request failed (${res.status})`);
+  const data = await res.json();
+  if (!data?.token) throw new Error('CSRF response missing token');
+  csrfToken = data.token;
+  return csrfToken;
+}
+
+// Deduplicates concurrent requests; force=true discards a stale/consumed token.
+function getCsrfToken(force = false) {
+  if (force) csrfToken = null;
+  if (csrfToken) return Promise.resolve(csrfToken);
+  if (!csrfPending) {
+    csrfPending = fetchCsrfToken().finally(() => { csrfPending = null; });
+  }
+  return csrfPending;
+}
+
+// Single low-level entry point for every /api call.
+// Attaches a token on writes and replays once if the server answers 403.
+// Returns a raw Response — callers decide how to parse it.
+async function withCsrf(path, options = {}) {
+  const isWrite = ['POST', 'PUT', 'DELETE', 'PATCH']
+    .includes((options.method || 'GET').toUpperCase());
+
+  const send = async (token) => {
+    const headers = { ...(options.headers || {}) };
+    if (token) headers['X-CSRF-Token'] = token;
+    return fetch(`/api${path}`, { ...options, headers });
+  };
+
+  if (!isWrite) return send(null);
+
+  // Serialise writes so two POSTs never race for the same token.
+  let res;
+  await (writeQueue = writeQueue.then(async () => {
+    res = await send(await getCsrfToken());
+    if (res.status === 403) {
+      res = await send(await getCsrfToken(true));
+    }
+  }));
+  return res;
+}
+
+// ================= API Calls =================   [CHANGED]
+async function api(endpoint, options = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+
+  try {
+    const res = await withCsrf(endpoint, {
+      ...options,
+      headers,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined
+    });
+
+    if (!res.ok) {
+      let detail = res.statusText || `HTTP ${res.status}`;
+      try {
+        const b = await res.json();
+        detail = b.error || b.message || detail;
+      } catch { /* non-JSON error body */ }
+      setStatus(`Error: ${detail}`, true);
+      throw new Error(detail);
+    }
+
+    return await res.json();
+  } catch (e) {
+    setStatus(`API Error: ${e.message}`, true);
+    console.error('API call failed:', endpoint, e);
+    api._lastError = e.message;
+    return null;
+  }
+}
+
+async function login() {
+  window.location.href = 'https://auth.mortis.org.uk/?rd=' + encodeURIComponent(window.location.href);
+}
+async function logout() {
+  window.location.href = 'https://auth.mortis.org.uk/logout?rd=' + encodeURIComponent(window.location.href);
+}
+
+async function loadLayoutForGuest() {
+  const data = localStorage.getItem('desktop_layout');
+  if (data) {
+    try {
+      const parsed = JSON.parse(data);
+      state.myLayout = parsed.links || [];
+      state.hiddenLinks = parsed.hiddenLinks || [];
+    } catch {
+      state.myLayout = [];
+      state.hiddenLinks = [];
+    }
+  } else {
+    state.myLayout = [];
+    state.hiddenLinks = [];
+  }
+}
+
+async function loadUser() {
+  try {
+    const user = await api('/me');
+    if (user) {
+      state.user = user;
+      updateWelcomeText();
+      addFileManagerIcon();
+      document.getElementById('user-name').textContent = user.name || user.email;
+      document.getElementById('btn-login').style.display = 'none';
+      document.getElementById('btn-logout').style.display = '';
+      loadWallpaper();
+    } else {
+      state.user = null;
+      document.getElementById('user-name').textContent = 'Guest';
+      document.getElementById('btn-login').style.display = '';
+      document.getElementById('btn-logout').style.display = '';
+      await loadSharedLinks();
+      loadLayoutForGuest();
+      await renderIcons();
+    }
+  } catch (e) {
+    console.error('loadUser failed:', e);
+    setStatus('Load error', true);
+  }
+}
+
+async function loadSharedLinks() {
+  const links = await api('/links');
+  if (links) state.sharedLinks = links;
+}
+
+async function loadLayout() {
+  const data = await api('/layout');
+  if (data) {
+    state.myLayout = data.links || [];
+    state.hiddenLinks = data.hiddenLinks || [];
+    await renderIcons();
+  }
+}
+
+async function saveWallpaper(wallpaper) {
+  if (!state.user) return;
+  const res = await api('/wallpapers', { method: 'POST', body: wallpaper });
+  if (res && res.ok) {
+    applyWallpaper(wallpaper);
+    notify('success', 'Wallpaper saved successfully');
+  } else {
+    notify('error', 'Wallpaper save failed', api._lastError || 'Could not save wallpaper.');
+  }
+}
+
+// ================= Theme =================
+function applyTheme(theme) {
+  state.theme = theme;
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem('desktop_theme', theme);
+  const btn = document.getElementById('btn-theme');
+  if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+}
+
+document.getElementById('btn-theme').addEventListener('click', () => {
+  applyTheme(state.theme === 'dark' ? 'light' : 'dark');
+});
+
+applyTheme(state.theme);
+
+// ================= Wallpaper =================
+let currentWallpaper = { kind: 'gradient', ref: 'classic' };
+
+// The one function that renders — NEVER sends CSS to the server
+function applyWallpaper(wp) {
+  const el = document.getElementById('wallpaper');
+  if (!el) return;
+
+  // Always tear down aurora's injected DOM, whatever we're switching to
+  el.querySelectorAll('.aur-bands, .aur-horizon, .aur-mountains').forEach(n => n.remove());
+
+  el.dataset.kind = wp.kind;
+  el.dataset.ambId = wp.kind === 'ambient' ? wp.ref : '';
+  el.style.cssText = '';  // hard reset
+
+  switch (wp.kind) {
+    case 'none':
+      break;
+    case 'color':
+      el.style.background = THEMES.color[wp.ref]?.color || THEMES.color.midnight.color;
+      break;
+    // gradient stays the same...
+    case 'ambient':
+      const t = THEMES.ambient[wp.ref] || THEMES.ambient['mesh-drift'];
+      el.style.setProperty('--amb-base', t.base);
+      (t.nodes || []).forEach((n, i) => el.style.setProperty(`--amb-c${i + 1}`, n.c));
+
+      if (wp.ref === 'aurora') {
+        el.insertAdjacentHTML('afterbegin', `
+      <div class="aur-bands">
+        <div class="aur-band aur-band-1"></div>
+        <div class="aur-band aur-band-2"></div>
+        <div class="aur-band aur-band-3"></div>
+      </div>
+      <div class="aur-horizon"></div>
+      <div class="aur-mountains">
+        <svg viewBox="0 0 1440 200" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0,200 L0,140 L80,90 L160,130 L260,60 L360,110 L440,50 L520,95 L620,30 L720,80 L820,20 L900,70 L980,40 L1060,85 L1160,35 L1260,90 L1360,55 L1440,80 L1440,200 Z" fill="#020510"/>
+          <path d="M0,200 L0,160 L100,120 L200,150 L320,100 L420,140 L540,90 L640,130 L760,110 L860,145 L960,105 L1080,135 L1180,115 L1300,140 L1440,120 L1440,200 Z" fill="rgba(0,10,8,.95)"/>
+        </svg>
+      </div>
+    `);
+      }
+      break;
+    case 'image':
+      el.style.backgroundImage = `url("/api/wallpapers/${wp.ref}")`;
+      el.style.backgroundSize = 'cover';
+      el.style.backgroundPosition = 'center';
+      break;
+  }
+  currentWallpaper = wp;
+}
+
+async function loadWallpaper() {
+  if (!state.user) {
+    applyWallpaper({ kind: 'gradient', ref: 'classic' });
+    return;
+  }
+  try {
+    const wp = await api('/wallpapers');
+    if (wp) {
+      applyWallpaper({ kind: wp.kind || 'gradient', ref: wp.ref || 'classic' });
+    }
+  } catch (e) {
+    console.error('Failed to load wallpaper:', e);
+    applyWallpaper({ kind: 'gradient', ref: 'classic' });
+  }
+}
+
+// --- Wallpaper picker modal ---
+document.getElementById('btn-wallpaper').addEventListener('click', () => {
+  wallpaperModal.style.display = 'flex';
+  renderWallpaperPicker();
+});
+
+document.getElementById('wp-cancel').addEventListener('click', () => {
+  wallpaperModal.style.display = 'none';
+});
+
+wallpaperModal.addEventListener('pointerdown', e => {
+  if (e.target === wallpaperModal) wallpaperModal.style.display = 'none';
+});
+
+// ToDo: Preview
+function renderWallpaperPicker(activeTab = 0) {
+  const grid = document.getElementById('wp-grid');
+  grid.innerHTML = '';
+
+  // Rebuild tab bar
+  const tabBar = document.createElement('div');
+  tabBar.className = 'wallpaper-picker-tabs';
+const tabs = [
+  { key: 'color',    label: 'Colors' },      // shorter so 4 tabs fit in 360px
+  { key: 'gradient', label: 'Gradients' },
+  { key: 'ambient',  label: 'Ambient' },
+  { key: 'image',    label: 'Image' },
+];
+  const flexTab = document.createElement('div');
+  flexTab.id = "wp-tab";
+  tabs.forEach((tab, index) => {
+    const btn = document.createElement('button');
+    btn.textContent = tab.label;
+    btn.addEventListener('click', () => renderWallpaperPicker(index));
+    if (index === activeTab) btn.classList.add('active');
+    flexTab.appendChild(btn);
+  });
+  tabBar.appendChild(flexTab);
+  grid.appendChild(tabBar);
+
+  const categories = [
+    { key: 'color', label: 'Solid Colors' },
+    { key: 'gradient', label: 'Gradients' },
+    { key: 'ambient', label: 'Ambient' },
+  ];
+
+const cat = tabs[activeTab];
+if (cat.key === 'image') {
+  renderUploadPanel(grid);
+  return;
+}
+const themes = THEMES[cat.key];
+
+  Object.entries(themes).forEach(([id, t]) => {
+    const div = document.createElement('div');
+    div.className = 'wallpaper-option' + (currentWallpaper.kind === cat.key && currentWallpaper.ref === id ? ' selected' : '');
+
+    if (cat.key === 'color') {
+      div.style.background = t.color;
+    } else if (cat.key === 'gradient') {
+      div.style.background = t.css;
+    } else if (cat.key === 'ambient') {
+      if (id === 'aurora') {
+        div.style.background = `
+      linear-gradient(180deg,
+        #020510 0%,
+        rgba(0,80,50,.8) 30%,
+        rgba(0,170,255,.4) 55%,
+        rgba(170,68,255,.3) 75%,
+        #020510 100%
+      )
+    `;
+        // Faint star dots
+        div.style.backgroundImage = `
+      radial-gradient(1px 1px at 20% 20%, rgba(255,255,255,.8) 0%, transparent 100%),
+      radial-gradient(1px 1px at 60% 15%, rgba(255,255,255,.6) 0%, transparent 100%),
+      radial-gradient(1px 1px at 80% 30%, rgba(255,255,255,.7) 0%, transparent 100%),
+      radial-gradient(1px 1px at 40% 10%, rgba(255,255,255,.5) 0%, transparent 100%),
+      linear-gradient(180deg,
+        #020510 0%,
+        rgba(0,80,50,.8) 30%,
+        rgba(0,170,255,.4) 55%,
+        rgba(170,68,255,.3) 75%,
+        #020510 100%
+      )
+    `;
+      } else {
+        div.style.background = t.base;
+      }
+    }
+
+    div.dataset.wp = JSON.stringify({ kind: cat.key, ref: id });
+    div.title = t.label;
+
+    div.onclick = () => {
+      if (!state.user) {
+        applyWallpaper({ kind: cat.key, ref: id });
+        grid.querySelectorAll('.wallpaper-option').forEach(el => el.classList.remove('selected'));
+        div.classList.add('selected');
+        return;
+      }
+
+      api('/wallpapers', { method: 'POST', body: { kind: cat.key, ref: id } })
+        .then(res => {
+          if (res && res.ok) {
+            applyWallpaper({ kind: cat.key, ref: id });
+            grid.querySelectorAll('.wallpaper-option').forEach(el => el.classList.remove('selected'));
+            div.classList.add('selected');
+            document.getElementById('wp-cancel').click();
+            notify('success', 'Wallpaper updated', t.label);
+          } else {
+            notify('error', 'Save failed', api._lastError || 'Could not save wallpaper.');
+          }
+        });
+    };
+
+    grid.appendChild(div);
+  });
+}
+
+// Client-side image compression
+async function compressImage(file) {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Cap at 2560px
+    const MAX = 2560;
+    let w = bitmap.width;
+    let h = bitmap.height;
+    if (w > MAX || h > MAX) {
+      if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+      else { w = Math.round(w * MAX / h); h = MAX; }
+    }
+
+    canvas.width = w;
+    canvas.height = h;
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+
+    // Encode to WebP with quality 0.82
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => {
+        if (blob && blob.type === 'image/webp') {
+          resolve(new File([blob], 'wallpaper.webp', { type: 'image/webp' }));
+        } else {
+          resolve(null);
+        }
+      }, 'image/webp', 0.82);
+    });
+  } catch (e) {
+    console.error('Compression failed:', e);
+    return null;
+  }
+}
+
+const WP_UPLOAD_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
+
+function renderUploadPanel(grid) {
+  const panel = document.createElement('div');
+  panel.className = 'wpu-panel';
+  grid.appendChild(panel);
+
+  if (!state.user) {
+    panel.innerHTML = '<p class="hint">Log in to upload your own wallpaper.</p>';
+    return;
+  }
+
+  panel.innerHTML = `
+    <div class="wpu-drop">
+      <input type="file" class="wpu-input" accept="image/jpeg,image/png,image/webp,image/avif">
+      <svg class="wpu-cloud" viewBox="0 0 24 24" width="30" height="30" fill="none"
+           stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+           stroke-linejoin="round" aria-hidden="true">
+        <polyline points="16 16 12 12 8 16"/>
+        <line x1="12" y1="12" x2="12" y2="21"/>
+        <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+      </svg>
+      <p class="wpu-title">Drag &amp; drop an image here or <span class="wpu-browse">browse</span></p>
+      <span class="wpu-note">JPEG, PNG, WebP or AVIF</span>
+    </div>
+    <div class="wpu-list"></div>`;
+
+  const drop  = panel.querySelector('.wpu-drop');
+  const input = panel.querySelector('.wpu-input');
+  const list  = panel.querySelector('.wpu-list');
+  let busy = false;
+
+  function createItem(file) {
+    const item = document.createElement('div');
+    item.className = 'wpu-item';
+    item.innerHTML = `
+      <div class="wpu-item-info">
+        <div class="wpu-name">
+          <span class="wpu-name-text"></span>
+          <span class="wpu-size"></span>
+        </div>
+        <div class="wpu-bar"><div class="wpu-fill"></div></div>
+        <div class="wpu-status"></div>
+      </div>
+      <span class="wpu-done" hidden>✓</span>
+      <button type="button" class="wpu-action" title="Try again" hidden>↻</button>`;
+
+    // textContent, never innerHTML, for anything that came from the user's filesystem
+    item.querySelector('.wpu-name-text').textContent = file.name;
+    item.querySelector('.wpu-size').textContent = `${(file.size / 1048576).toFixed(2)} MB`;
+
+    const fill     = item.querySelector('.wpu-fill');
+    const status   = item.querySelector('.wpu-status');
+    const doneEl   = item.querySelector('.wpu-done');
+    const retryBtn = item.querySelector('.wpu-action');
+    let onRetry = null;
+    retryBtn.addEventListener('click', () => onRetry?.());
+
+    return {
+      el: item,
+      setProgress(pct, text) {
+        item.classList.remove('has-error');
+        retryBtn.hidden = true;
+        doneEl.hidden = true;
+        fill.style.width = pct + '%';
+        status.textContent = text || `${pct}%`;
+      },
+      setDone() {
+        retryBtn.hidden = true;
+        doneEl.hidden = false;
+        status.textContent = 'Done';
+      },
+      setError(msg, retry) {
+        item.classList.add('has-error');
+        fill.style.width = '100%';
+        doneEl.hidden = true;
+        status.textContent = msg;
+        onRetry = retry || null;
+        retryBtn.hidden = !retry;
+      }
+    };
+  }
+
+  function handleFiles(files) {
+    const file = files && files[0];          // single file only; extras are ignored
+    if (!file || busy) return;
+
+    list.innerHTML = '';
+    const ui = createItem(file);
+    list.appendChild(ui.el);
+
+    if (!WP_UPLOAD_TYPES.has(file.type)) {
+      ui.setError('Only JPEG, PNG, WebP or AVIF images are allowed.');
+      return;
+    }
+    busy = true;
+    uploadWallpaperFile(file, ui).finally(() => { busy = false; });
+  }
+
+  drop.addEventListener('dragover',  e => { e.preventDefault(); drop.classList.add('drag'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    drop.classList.remove('drag');
+    handleFiles(e.dataTransfer.files);
+  });
+  input.addEventListener('change', () => {
+    handleFiles(input.files);
+    input.value = '';                        // lets you pick the same file again
+  });
+}
+
+async function uploadWallpaperFile(file, ui) {
+  try {
+    ui.setProgress(10, 'Optimising image…');
+    const compressed = await compressImage(file);
+    if (!compressed) throw new Error("Couldn't process that image.");
+
+    ui.setProgress(40, 'Uploading…');
+    const formData = new FormData();
+    formData.append('file', compressed, 'wallpaper.webp');
+
+    const res = await withCsrf('/wallpapers/upload', { method: 'POST', body: formData });
+    if (!res.ok) {
+      let msg = 'Upload failed';
+      try { msg = (await res.json()).error || msg; } catch { /* non-JSON body */ }
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+    ui.setProgress(100, 'Finishing…');
+    ui.setDone();
+    applyWallpaper({ kind: 'image', ref: data.wallpaper.ref });
+    notify('success', 'Wallpaper uploaded', file.name);
+    setTimeout(() => { wallpaperModal.style.display = 'none'; }, 900);
+  } catch (e) {
+    ui.setError(e.message, () => uploadWallpaperFile(file, ui));
+  }
+}
+// ================= Icons =================
+function getLinkById(id) {
+  return state.sharedLinks.find(l => l.id === id);
+}
+
+async function hideLink(link) {
+  state.myLayout = state.myLayout.filter(i => i.linkId !== link.id);
+  state.hiddenLinks = state.hiddenLinks || [];
+  if (!state.hiddenLinks.includes(link.id)) state.hiddenLinks.push(link.id);
+  const res = await saveLayoutWithStatus();
+  await renderIcons();
+  if (!res) {
+    notify('error', 'Save failed', `Could not save layout: ${api._lastError || 'unknown error'}`);
+  }
+
+  // Close any open window for this link
+  const winKey = link.url + '__' + link.id;
+  closeWindow(winKey);
+
+  notify('info', 'Icon removed', `"${link.title}" hidden from your desktop. Use Start Menu to reopen.`);
+}
+
+async function renderIcons() {
+  desktop.querySelectorAll('.icon:not(.fm-icon)').forEach(el => el.remove());
+
+  const layoutMap = {};
+  state.myLayout.forEach(item => { layoutMap[item.linkId] = item; });
+
+  let layoutChanged = false;
+  const hidden = new Set(state.hiddenLinks || []);
+
+  state.sharedLinks.forEach(link => {
+    if (hidden.has(link.id)) return;
+    if (link.hidden) return;
+
+    if (!layoutMap[link.id]) {
+      const free = getNextPosition();
+      const pos = { linkId: link.id, x: free.x, y: free.y };
+      state.myLayout.push(pos);
+      layoutMap[link.id] = pos;
+      layoutChanged = true;
+    }
+    const pos = layoutMap[link.id];
+    desktop.appendChild(buildIcon(link, pos.x, pos.y));
+  });
+
+  if (layoutChanged) {
+    const res = await saveLayoutWithStatus();
+    if (!res) {
+      notify('error', 'Layout save failed', api._lastError || 'Unknown error');
+    }
+  }
+}
+
+function buildIcon(link, x, y) {
+  const el = document.createElement('div');
+  el.className = 'icon';
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+
+  const icon = resolveIcon(link);
+  const imgSrc = icon || FALLBACK_ICON;
+
+  // Use img element with onerror handler to avoid quote issues in attributes
+  const img = document.createElement('img');
+  img.src = imgSrc;
+  img.onerror = function () {
+    this.onerror = null;
+    this.src = FALLBACK_ICON;
+  };
+  img.style.cssText = 'width:48px;height:48px;pointer-events:none;transition:filter 0.15s,transform 0.15s;';
+
+  const label = document.createElement('span');
+  label.textContent = link.title;
+
+  el.appendChild(img);
+  el.appendChild(label);
+
+  makeDraggable(el, () => {
+    const pos = state.myLayout.find(i => i.linkId === link.id);
+    if (pos) {
+      pos.x = parseFloat(el.style.left);
+      pos.y = parseFloat(el.style.top);
+    } else {
+      state.myLayout.push({ linkId: link.id, x: parseFloat(el.style.left), y: parseFloat(el.style.top) });
+    }
+    debouncedSaveLayout();
+  });
+
+  el.addEventListener('pointerdown', e => { select(el, link); e.stopPropagation(); });
+  el.addEventListener('dblclick', () => openWindow(link));
+  el.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    suppressDesktopCtx = true;
+    setTimeout(() => suppressDesktopCtx = false, 0);
+    select(el, link);
+    ctxPos = { x: e.clientX, y: e.clientY };
+    ctxTarget = link;
+    showMenu(e.clientX, e.clientY, true);
+  });
+  return el;
+}
+
+function select(el, link) {
+  deselect();
+  selectedIcon = { el, link };
+  el.classList.add('selected');
+}
+function deselect() {
+  if (selectedIcon) selectedIcon.el.classList.remove('selected');
+  selectedIcon = null;
+}
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+  if (e.key === 'Escape') closeStartMenu();
+
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIcon) {
+    const link = selectedIcon.link;
+    deselect();
+    state.myLayout = state.myLayout.filter(i => i.linkId !== link.id);
+    state.hiddenLinks = state.hiddenLinks || [];
+    if (!state.hiddenLinks.includes(link.id)) state.hiddenLinks.push(link.id);
+    debouncedSaveLayout();
+    renderIcons();
+    closeWindow(link.url + '__' + link.id);
+  }
+});
+
+function makeDraggable(el, onEnd) {
+  const TOP_BAR_HEIGHT = 28;
+  const BOTTOM_BAR_HEIGHT = 28;
+  const ICON_W = 84;
+  const ICON_H = 60;
+
+  el.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    const sx = e.clientX, sy = e.clientY;
+    const ox = parseFloat(el.style.left), oy = parseFloat(el.style.top);
+    let moved = false;
+    el.setPointerCapture(e.pointerId);
+
+    function mv(ev) {
+      const dx = ev.clientX - sx, dy = ev.clientY - sy;
+      if (!moved && Math.abs(dx) + Math.abs(dy) > 3) { moved = true; el.classList.add('dragging'); }
+      if (!moved) return;
+      const maxX = Math.max(0, innerWidth - ICON_W);
+      const maxY = Math.max(0, innerHeight - TOP_BAR_HEIGHT - BOTTOM_BAR_HEIGHT - ICON_H);
+      el.style.left = Math.max(0, Math.min(maxX, ox + dx)) + 'px';
+      el.style.top = Math.max(TOP_BAR_HEIGHT, Math.min(maxY, oy + dy)) + 'px';
+    }
+
+    function up() {
+      el.removeEventListener('pointermove', mv);
+      el.removeEventListener('pointerup', up);
+      el.classList.remove('dragging');
+      el.releasePointerCapture(e.pointerId);
+      if (moved && onEnd) onEnd();
+    }
+
+    el.addEventListener('pointermove', mv);
+    el.addEventListener('pointerup', up);
+  });
+}
+
+// ================= File Manager App =================
+const FILE_MANAGER = { id: 'filemanager', title: 'File Manager', url: 'app://files' };
+
+function openFileManager() {
+  if (openWins.has(FILE_MANAGER.url)) { restoreWin(FILE_MANAGER.url); return; }
+  const win = document.createElement('div');
+  win.className = 'window';
+  win.style.width = '560px';
+  win.style.height = '420px';
+  win.style.left = Math.max(0, innerWidth / 2 - 280) + 'px';
+  win.style.top = Math.max(0, innerHeight / 2 - 210) + 'px';
+  win.style.zIndex = ++zTop;
+  win.innerHTML = `
+    <div class="titlebar">
+      <span class="title">📁 File Manager</span>
+      <button data-act="min" title="Minimize">–</button>
+      <button data-act="close" title="Close">✕</button>
+    </div>
+    <div class="file-manager">
+      <div class="fm-toolbar">
+        <button id="fm-refresh">↻ Refresh</button>
+        <button id="fm-newfile">＋ New text file</button>
+        <input type="file" id="fm-upload-input" style="display:none">
+        <button id="fm-upload">⬆ Upload</button>
+      </div>
+      <div class="fm-upload-area" id="fm-dropzone">Drop files here to upload</div>
+      <div class="fm-list" id="fm-list"></div>
+    </div>`;
+
+  const bar = win.querySelector('.titlebar');
+  const TITLEBAR_H = 34;
+  const BOTTOM_BAR_HEIGHT = 28;
+
+  bar.addEventListener('pointerdown', e => {
+    if (e.target.tagName === 'BUTTON') return;
+    const sx = e.clientX, sy = e.clientY, ox = win.offsetLeft, oy = win.offsetTop;
+    const winW = win.offsetWidth;
+    const winH = win.offsetHeight;
+    function mv(ev) {
+      const dx = ev.clientX - sx, dy = ev.clientY - sy;
+      const maxY = Math.max(TITLEBAR_H, innerHeight - BOTTOM_BAR_HEIGHT - winH);
+      win.style.left = Math.max(0, ox + dx) + 'px';
+      win.style.top = Math.max(0, Math.min(maxY, oy + dy)) + 'px';
+    }
+    function up() { bar.removeEventListener('pointermove', mv); bar.removeEventListener('pointerup', up); }
+    bar.setPointerCapture(e.pointerId);
+    bar.addEventListener('pointermove', mv);
+    bar.addEventListener('pointerup', up);
+  });
+
+  const list = win.querySelector('#fm-list');
+
+  async function loadFiles() {
+    const files = await api('/files');
+    if (!files) {
+      list.innerHTML = '<div class="fm-empty">Failed to load files. Please refresh or check your connection.</div>';
+      notify('error', 'File load failed', 'Could not retrieve your files from the server.');
+      return;
+    }
+    list.innerHTML = '';
+    if (!files.length) {
+      list.innerHTML = '<div class="fm-empty">No files yet. Upload or create one.</div>';
+      return;
+    }
+    files.forEach(f => {
+      const row = document.createElement('div');
+      row.className = 'fm-item';
+      const kb = f.size > 1024 ? (f.size / 1024).toFixed(1) + ' KB' : f.size + ' B';
+      row.innerHTML = `<span class="fm-icon">📄</span><span class="fm-name">${escapeHtml(f.name)}</span>
+        <span class="fm-size">${kb}</span><span class="fm-date">${new Date(f.modified).toLocaleDateString()}</span>
+        <span class="fm-actions"><button data-a="dl">Download</button><button data-a="del">Delete</button></span>`;
+      row.querySelector('[data-a="dl"]').onclick = () => {
+        const a = document.createElement('a');
+        a.href = `${API}/files/download/${encodeURIComponent(f.name)}`;
+        a.download = f.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      };
+      row.querySelector('[data-a="del"]').onclick = async () => {
+        if (!confirm(`Delete ${f.name}? This action cannot be undone.`)) return;
+        const res = await api(`/files/${encodeURIComponent(f.name)}`, { method: 'DELETE' });
+        if (res && res.ok) {
+          notify('success', 'File deleted', f.name);
+          loadFiles();
+        } else {
+          notify('error', 'Delete failed', `Could not delete ${f.name}. You may not have permission.`);
+        }
+      };
+      list.appendChild(row);
+    });
+  }
+
+  win.querySelector('#fm-refresh').onclick = loadFiles;
+  win.querySelector('#fm-newfile').onclick = async () => {
+    const name = prompt('File name:', 'notes.txt');
+    if (!name) return;
+    const content = prompt('Initial content:', '') || '';
+    await api('/files/create', { method: 'POST', body: { name, content } });
+    loadFiles();
+  };
+
+  const uploadInput = win.querySelector('#fm-upload-input');
+  win.querySelector('#fm-upload').onclick = () => uploadInput.click();
+  uploadInput.onchange = () => { if (uploadInput.files[0]) uploadFile(uploadInput.files[0]); };
+
+  async function uploadFile(file) {
+    const uploadNotif = notify('info', 'Uploading...', file.name + ' — please wait');
+
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+
+    // [CHANGED] was: await getCsrfToken(); fetch(`${API}/files/upload?...`, { headers: {'X-CSRF-Token': csrfToken}, ... })
+    const res = await withCsrf(`/files/upload?filename=${encodeURIComponent(file.name)}`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (res.ok) {
+      dismissNotif(uploadNotif);
+      notify('success', 'Uploaded', file.name);
+      loadFiles();
+    } else {
+      let errorMsg = 'Upload failed';
+      try {
+        const errBody = await res.json();
+        errorMsg = errBody.error || errorMsg;
+      } catch (e) { }
+      dismissNotif(uploadNotif);
+      notify('error', 'Upload failed', errorMsg);
+    }
+  }
+
+  const drop = win.querySelector('#fm-dropzone');
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('dragover'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('dragover');
+    if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]);
+  });
+
+  desktop.appendChild(win);
+  addTaskButton(FILE_MANAGER, win, FILE_MANAGER.url);
+
+  win.querySelector('[data-act="close"]').onclick = () => closeWindow(FILE_MANAGER.url);
+  win.querySelector('[data-act="min"]').onclick = () => minimizeWin(FILE_MANAGER.url);
+
+  loadFiles();
+}
+
+// ================= NOTIFICATIONS =================
+let notifCount = 0;
+const notifContainer = document.getElementById('notif-container');
+const notifBadge = document.getElementById('notif-badge');
+
+function notify(type, title, msg) {
+  const n = document.createElement('div');
+  n.className = 'notification ' + type;
+  n.innerHTML = `
+    <div class="notif-body">
+      <div class="notif-title">${escapeHtml(title)}</div>
+      <div class="notif-msg">${escapeHtml(msg || '')}</div>
+    </div>
+    <button class="notif-close">×</button>`;
+  notifContainer.appendChild(n);
+  updateNotifBadge();
+  setTimeout(() => dismissNotif(n), 5000);
+  n.querySelector('.notif-close').onclick = () => dismissNotif(n);
+  return n;
+}
+
+function dismissNotif(el) {
+  el.classList.add('hiding');
+  setTimeout(() => { el.remove(); updateNotifBadge(); }, 300);
+}
+
+function updateNotifBadge() {
+  const count = notifContainer.children.length;
+  notifCount = count;
+  if (count > 0) {
+    notifBadge.textContent = count;
+    notifBadge.style.display = 'flex';
+  } else {
+    notifBadge.style.display = 'none';
+  }
+}
+
+document.getElementById('btn-notifications').addEventListener('click', () => {
+  if (!notifCount) notify('info', 'No new notifications', 'You are all caught up.');
+});
+
+// ================= START MENU =================
+const startMenu = document.getElementById('start-menu');
+const startAppsList = document.getElementById('start-apps-list');
+const startSearchInput = document.getElementById('start-search-input');
+
+const BUILT_IN_APPS = [
+  { id: 'filemanager', name: 'File Manager', cat: 'System', icon: '📁' },
+  { id: 'wallpaper', name: 'Change Wallpaper', cat: 'Settings', icon: '🖼️' },
+];
+
+function toggleStartMenu() {
+  const isOpen = startMenu.classList.toggle('open');
+  if (isOpen) renderStartApps();
+}
+
+function closeStartMenu() {
+  startMenu.classList.remove('open');
+  document.querySelectorAll('.flyout-open').forEach(f => f.classList.remove('flyout-open'));
+}
+
+startAppsList.addEventListener('contextmenu', e => {
+  const row = e.target.closest('.start-app-item[data-link-id]');
+  if (!row) return;
+  e.preventDefault();
+  e.stopPropagation();
+  suppressDesktopCtx = true;
+  setTimeout(() => suppressDesktopCtx = false, 0);
+
+  const link = getLinkById(Number(row.dataset.linkId));
+  if (!link) return;
+
+  ctxTarget = link;
+  showMenu(e.clientX, e.clientY, true);
+});
+
+function renderStartApps(filter = '') {
+  document.querySelectorAll('.start-folder-body').forEach(el => el.remove());
+  startAppsList.innerHTML = '';
+  const lowerFilter = filter.toLowerCase();
+
+  const groups = {};
+  const addItem = (cat, item) => {
+    (groups[cat] = groups[cat] || []).push(item);
+  };
+
+  BUILT_IN_APPS.forEach(app => {
+    if (lowerFilter && !app.name.toLowerCase().includes(lowerFilter)) return;
+    addItem(app.cat, {
+      type: 'app',
+      name: app.name,
+      icon: `<span style="font-size:24px;">${app.icon}</span>`,
+      onclick: () => {
+        closeStartMenu();
+        if (app.id === 'filemanager') openFileManager();
+        if (app.id === 'wallpaper') document.getElementById('btn-wallpaper').click();
+      }
+    });
+  });
+
+  state.sharedLinks.forEach(link => {
+    if (lowerFilter && !link.title.toLowerCase().includes(lowerFilter)) return;
+    if ((state.hiddenLinks || []).includes(link.id)) return;
+    const resolved = resolveIcon(link) || FALLBACK_ICON;
+    addItem(link.category || 'Web', {
+      type: 'link',
+      linkId: link.id,
+      name: link.title,
+      sub: link.url,
+      icon: `<img class="start-app-icon" data-src="${escapeHtml(resolved)}" alt="${escapeHtml(link.title)}">`,
+      onclick: async () => {
+        closeStartMenu();
+        if ((state.hiddenLinks || []).includes(link.id)) {
+          state.hiddenLinks = state.hiddenLinks.filter(id => id !== link.id);
+          await saveLayoutWithStatus();
+          await renderIcons();
+        }
+        openWindow(link);
+      }
+    });
+  });
+
+  Object.keys(groups).sort().forEach(cat => {
+    const items = groups[cat];
+    const folder = document.createElement('div');
+    folder.className = 'start-folder';
+
+    const header = document.createElement('div');
+    header.className = 'start-folder-header';
+    header.innerHTML = `
+    <span class="folder-icon">📂</span>
+    <span class="folder-name">${escapeHtml(cat)}</span>
+    <span class="folder-count">${items.length}</span>
+    <span class="folder-caret">▶</span>
+  `;
+
+    // Build the flyout panel and append to body so it escapes all overflow clipping
+    const body = document.createElement('div');
+    body.className = 'start-folder-body';
+    document.body.appendChild(body);
+
+    items.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'start-app-item';
+      if (item.linkId != null) row.dataset.linkId = item.linkId;
+      row.innerHTML = `${item.icon}<div class="app-info">
+      <div class="app-name">${escapeHtml(item.name)}</div>
+      ${item.sub ? `<div class="app-cat">${escapeHtml(item.sub)}</div>` : ''}
+    </div>`;
+
+      const img = row.querySelector('img.start-app-icon');
+      if (img) {
+        img.src = img.dataset.src;
+        img.onerror = function () { this.onerror = null; this.src = FALLBACK_ICON; };
+      }
+
+      row.onclick = async () => {
+        closeStartMenu();
+        if (item.type !== 'link') {
+          if (item.onclick) item.onclick();
+          return;
+        }
+        const link = getLinkById(item.linkId);
+        if (!link) return;
+        if ((state.hiddenLinks || []).includes(link.id)) {
+          state.hiddenLinks = state.hiddenLinks.filter(id => id !== link.id);
+          await saveLayoutWithStatus();
+          await renderIcons();
+        }
+        openWindow(link);
+      };
+
+      row.oncontextmenu = e => {
+        e.preventDefault(); e.stopPropagation();
+        if (item.type !== 'link') return;
+        const link = getLinkById(item.linkId);
+        if (!link) return;
+        ctxTarget = link;
+        ctxPos = { x: e.clientX, y: e.clientY };
+        showMenu(e.clientX, e.clientY, true);
+      };
+
+      body.appendChild(row);
+    });
+
+    const setOpen = (on) => {
+      folder.classList.toggle('flyout-open', on);
+      body.classList.toggle('flyout-open', on);
+    };
+
+    header.addEventListener('mouseenter', () => {
+      if (lowerFilter) return;               // search mode shows everything inline
+      document.querySelectorAll('.start-folder.flyout-open, .start-folder-body.flyout-open')
+        .forEach(el => { if (el !== folder && el !== body) el.classList.remove('flyout-open'); });
+
+      const rect = header.getBoundingClientRect();
+      const estH = items.length * 44 + 12;
+      let top = rect.top;
+      if (top + estH > window.innerHeight - 8) top = Math.max(8, window.innerHeight - estH - 8);
+      body.style.top = top + 'px';
+      body.style.left = (rect.right + 6) + 'px';
+      setOpen(true);
+    });
+
+    body.addEventListener('mouseenter', () => { if (!lowerFilter) setOpen(true); });
+
+    const closeFlyout = () => {
+      if (lowerFilter) return;               // otherwise search results vanish on mouseleave
+      setTimeout(() => {
+        if (!body.matches(':hover') && !header.matches(':hover')) setOpen(false);
+      }, 80);
+    };
+    header.addEventListener('mouseleave', closeFlyout);
+    body.addEventListener('mouseleave', closeFlyout);
+
+    if (lowerFilter) {
+      body.style.cssText = `
+      position: static; opacity: 1; transform: none;
+      pointer-events: auto; width: auto; max-height: none;
+      box-shadow: none; border: none; background: transparent;
+      padding-left: 14px; border-left: 1px solid var(--aui-border);
+      margin-left: 16px; backdrop-filter: none;
+    `;
+      // Re-append inline for search mode
+      body.remove();
+      folder.appendChild(header);
+      folder.appendChild(body);
+      folder.classList.add('flyout-open');
+    }
+
+    folder.appendChild(header);
+    startAppsList.appendChild(folder);
+  });
+}
+
+document.getElementById('btn-start').addEventListener('click', e => {
+  e.stopPropagation();
+  toggleStartMenu();
+});
+
+document.addEventListener('pointerdown', e => {
+  if (startMenu.contains(e.target)) return;
+  if (e.target.closest('#btn-start')) return;
+  if (e.target.closest('.start-folder-body')) return;   // flyouts live on <body>
+  closeStartMenu();
+});
+
+startSearchInput.addEventListener('input', e => renderStartApps(e.target.value));
+
+document.getElementById('btn-start-logout').addEventListener('click', logout);
+document.getElementById('btn-start-wallpaper').addEventListener('click', () => {
+  closeStartMenu();
+  document.getElementById('btn-wallpaper').click();
+});
+
+// ================= FILE MANAGER LAUNCHER =================
+function addFileManagerIcon() {
+  if (desktop.querySelector('[data-app="filemanager"]')) return;
+
+  const el = document.createElement('div');
+  el.className = 'icon fm-icon';
+  el.dataset.app = 'filemanager';
+
+  const saved = localStorage.getItem('fm_icon_pos');
+  if (saved) {
+    try { state.fmIconPos = JSON.parse(saved); } catch (e) { }
+  }
+  const fmPos = state.fmIconPos || { x: 24, y: 740 };
+  el.style.left = fmPos.x + 'px';
+  el.style.top = fmPos.y + 'px';
+  el.innerHTML = `<span style="font-size:48px;line-height:48px;display:block;">📁</span><span>Files</span>`;
+
+  makeDraggable(el, () => {
+    state.fmIconPos = {
+      x: parseFloat(el.style.left),
+      y: parseFloat(el.style.top)
+    };
+    localStorage.setItem('fm_icon_pos', JSON.stringify(state.fmIconPos));
+  });
+
+  el.addEventListener('dblclick', openFileManager);
+  el.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    suppressDesktopCtx = true;
+    setTimeout(() => suppressDesktopCtx = false, 0);
+    select(el, null);
+    ctxTarget = null;
+    showMenu(e.clientX, e.clientY, false);
+  });
+
+  desktop.appendChild(el);
+}
+
+window.addEventListener('load', addFileManagerIcon);
+
+// ================= UPDATE WELCOME TEXT =================
+function updateWelcomeText() {
+  const h = document.getElementById('start-welcome');
+  const p = document.getElementById('start-subtitle');
+  if (state.user) {
+    h.textContent = `Hello, ${state.user.name || state.user.email}`;
+    p.textContent = 'Ready when you are';
+  } else {
+    h.textContent = 'Guest Mode';
+    p.textContent = 'Login to sync your layout';
+  }
+}
+
+// ================= Windows =================
+function openWindow(link) {
+  // Links flagged as 'tab' bypass the desktop window entirely
+  if (link.mode === 'tab') {
+    window.open(link.url, '_blank', 'noopener,noreferrer');
+    return;
+  }
+
+  const winKey = link.url + '__' + link.id;  // unique per link
+  if (openWins.has(winKey)) { restoreWin(winKey); return; }
+
+  const n = openWins.size;
+  const win = document.createElement('div');
+  win.className = 'window';
+  win.style.width = '640px';
+  win.style.height = '440px';
+  win.style.left = Math.max(0, innerWidth / 2 - 320 + n * 28) + 'px';
+  win.style.top = Math.max(0, innerHeight / 2 - 240 + n * 28) + 'px';
+  win.style.zIndex = ++zTop;
+
+  win.innerHTML = `
+    <div class="titlebar">
+      <span class="title">${escapeHtml(link.title)} — ${escapeHtml(link.url)}</span>
+      <button data-act="min" title="Minimize">–</button>
+      <button data-act="close" title="Close">✕</button>
+    </div>
+    <div style="position:relative; flex:1; overflow:hidden;">
+      <iframe src="${escapeHtml(link.url)}" sandbox="allow-scripts allow-forms" style="position:absolute; inset:0; width:100%; height:100%; border:0;"></iframe>
+    </div>
+    <div class="resize-handle resize-n"></div>
+    <div class="resize-handle resize-s"></div>
+    <div class="resize-handle resize-e"></div>
+    <div class="resize-handle resize-w"></div>
+    <div class="resize-handle resize-ne"></div>
+    <div class="resize-handle resize-nw"></div>
+    <div class="resize-handle resize-se"></div>
+    <div class="resize-handle resize-sw"></div>
+  `;
+
+  const bar = win.querySelector('.titlebar');
+  const TITLEBAR_H = 34;
+  const BOTTOM_BAR_HEIGHT = 28;
+
+  bar.addEventListener('pointerdown', e => {
+    if (e.target.tagName === 'BUTTON') return;
+    const sx = e.clientX, sy = e.clientY;
+    const ox = parseFloat(win.style.left), oy = parseFloat(win.style.top);
+    const winW = win.offsetWidth;
+    const winH = win.offsetHeight;
+
+    function mv(ev) {
+      const dx = ev.clientX - sx, dy = ev.clientY - sy;
+      const maxY = Math.max(TITLEBAR_H, innerHeight - BOTTOM_BAR_HEIGHT - winH);
+      win.style.left = Math.max(0, ox + dx) + 'px';
+      win.style.top = Math.max(0, Math.min(maxY, oy + dy)) + 'px';
+    }
+    function up() {
+      bar.removeEventListener('pointermove', mv);
+      bar.removeEventListener('pointerup', up);
+    }
+
+    bar.setPointerCapture(e.pointerId);
+    bar.addEventListener('pointermove', mv);
+    bar.addEventListener('pointerup', up);
+  });
+
+  win.addEventListener('pointerdown', () => { win.style.zIndex = ++zTop; setActive(winKey); });
+  win.querySelector('[data-act="close"]').onclick = () => closeWindow(winKey);
+  win.querySelector('[data-act="min"]').onclick = () => minimizeWin(winKey);
+
+  makeResizable(win);
+
+  desktop.appendChild(win);
+  addTaskButton(link, win, winKey);
+}
+
+// ================= Resize Logic =================
+function makeResizable(win) {
+  const TOP_BAR_HEIGHT = 28;
+  const BOTTOM_BAR_HEIGHT = 28;
+  const TITLEBAR_H = 34;
+  const handles = win.querySelectorAll('.resize-handle');
+
+  handles.forEach(handle => {
+    handle.addEventListener('pointerdown', e => {
+      e.preventDefault();
+
+      const sx = e.clientX, sy = e.clientY;
+      const ow = win.offsetWidth, oh = win.offsetHeight;
+      const ox = win.offsetLeft, oy = win.offsetTop;
+
+      const dir = handle.className.split(' ')[1];
+      const isNorth = dir.includes('n');
+      const isSouth = dir.includes('s');
+      const isEast = dir.includes('e');
+      const isWest = dir.includes('w');
+
+      handle.setPointerCapture(e.pointerId);
+
+      function mv(ev) {
+        const dx = ev.clientX - sx;
+        const dy = ev.clientY - sy;
+
+        let newW = ow, newH = oh, newLeft = ox, newTop = oy;
+
+        if (isEast) newW = Math.max(320, ow + dx);
+        if (isWest) { newW = Math.max(320, ow - dx); newLeft = ox + dx; }
+        if (isSouth) newH = Math.max(200, oh + dy);
+        if (isNorth) { newH = Math.max(200, oh - dy); newTop = oy + dy; }
+
+        const maxY = Math.max(TITLEBAR_H, innerHeight - BOTTOM_BAR_HEIGHT - newH);
+        newLeft = Math.max(0, newLeft);
+        newTop = Math.max(0, Math.min(maxY, newTop));
+
+        win.style.width = newW + 'px';
+        win.style.height = newH + 'px';
+        win.style.left = newLeft + 'px';
+        win.style.top = newTop + 'px';
+      }
+
+      function up() {
+        handle.removeEventListener('pointermove', mv);
+        handle.removeEventListener('pointerup', up);
+        handle.releasePointerCapture(e.pointerId);
+      }
+
+      handle.addEventListener('pointermove', mv);
+      handle.addEventListener('pointerup', up);
+    });
+  });
+}
+
+function addTaskButton(link, win, winKey) {
+  const btn = document.createElement('button');
+  btn.className = 'taskbtn active';
+  btn.textContent = link.title;
+  btn.onclick = () => {
+    if (win.classList.contains('minimized')) restoreWin(winKey);
+    else if (parseInt(win.style.zIndex) === zTop) minimizeWin(winKey);
+    else { win.style.zIndex = ++zTop; setActive(winKey); }
+  };
+  openWins.set(winKey, { win, btn });
+  const items = document.getElementById('taskbar-items');
+  items.appendChild(btn);
+}
+
+function minimizeWin(winKey) {
+  const w = openWins.get(winKey);
+  if (!w) return;
+  w.win.classList.add('minimized');
+  w.btn.classList.remove('active');
+}
+
+function restoreWin(winKey) {
+  const w = openWins.get(winKey);
+  if (!w) return;
+  w.win.classList.remove('minimized');
+  w.win.style.zIndex = ++zTop;
+  setActive(winKey);
+}
+
+function closeWindow(winKey) {
+  const w = openWins.get(winKey);
+  if (!w) return;
+  w.win.remove();
+  w.btn.remove();
+  openWins.delete(winKey);
+}
+
+function setActive(winKey) {
+  openWins.forEach((v, k) => v.btn.classList.toggle('active', k === winKey));
+}
+
+// ================= Context Menu =================
+desktop.addEventListener('contextmenu', e => {
+  if (suppressDesktopCtx) return;
+  e.preventDefault();
+  ctxTarget = null;
+  showMenu(e.clientX, e.clientY, false);
+});
+
+function showMenu(x, y, onIcon) {
+  const admin = userIsAdmin();
+  const hasOverride = ctxTarget ? !!getLayoutItem(ctxTarget.id)?.icon : false;
+
+  if (onIcon) {
+    ctxmenu.innerHTML = `
+      <div data-act="open">📂 Open</div>
+      ${admin ? '<div data-act="edit">✏️ Edit…</div>' : ''}
+      ${hasOverride ? '<div data-act="reset-icon">🖼️ Reset my icon</div>' : ''}
+      <div class="sep"></div>
+      <div data-act="open-newtab">🔗 Open in new tab</div>
+      <div data-act="open-newwindow">🪟 Open in new window</div>
+      <div class="sep"></div>
+      <div data-act="remove">🗑️ Remove icon</div>
+      <div class="sep"></div>
+      ${state.user ? '<div data-act="add">➕ Add link…</div><div class="sep"></div>' : ''}
+      <div data-act="reset">♻️ Reset icon positions</div>
+      ${admin ? '<div data-act="reset-links" style="color:#ef4444">🔄 Reset links to defaults</div>' : ''}
+    `;
+  } else {
+    ctxmenu.innerHTML = `
+      ${state.user ? '<div data-act="add">➕ Add link…</div><div class="sep"></div>' : ''}
+      <div data-act="reset">♻️ Reset layout</div>
+      ${admin ? '<div data-act="reset-links" style="color:#ef4444">🔄 Reset links to defaults</div>' : ''}
+    `;
+  }
+
+  // Position near cursor FIRST, then measure — avoids rendering at (0,0)
+  ctxmenu.style.left = x + 'px';
+  ctxmenu.style.top = y + 'px';
+  ctxmenu.style.visibility = 'hidden';
+  ctxmenu.style.display = 'block';
+
+  const rect = ctxmenu.getBoundingClientRect();
+  const MARGIN = 8;
+  const TOP_BAR = 28, BOTTOM_BAR = 28;
+
+  let left = x + 4;
+  let top = y + 4;
+
+  if (left + rect.width > innerWidth - MARGIN) left = x - rect.width - 4;
+  if (top + rect.height > innerHeight - MARGIN) top = y - rect.height - 4;
+
+  left = Math.max(MARGIN, Math.min(left, innerWidth - rect.width - MARGIN));
+  top = Math.max(TOP_BAR + MARGIN, Math.min(top, innerHeight - BOTTOM_BAR - rect.height - MARGIN));
+
+  ctxmenu.style.left = left + 'px';
+  ctxmenu.style.top = top + 'px';
+  ctxmenu.style.visibility = '';
+}
+
+function hideMenu() { ctxmenu.style.display = 'none'; }
+
+ctxmenu.addEventListener('click', async e => {
+  const act = e.target.dataset.act;
+  if (!act) return;
+
+  if (act === 'open' && ctxTarget) openWindow(ctxTarget);
+
+  if (act === 'open-newtab' && ctxTarget) {
+    window.open(ctxTarget.url, '_blank');
+  }
+
+  if (act === 'open-newwindow' && ctxTarget) {
+    window.open(
+      ctxTarget.url,
+      '_blank',
+      'width=1280,height=800,noopener,noreferrer'
+    );
+  }
+
+  if (act === 'edit' && ctxTarget) openEditModal(ctxTarget);
+
+  if (act === 'reset-icon' && ctxTarget) {
+    await setLocalIcon(ctxTarget, '');
+    notify('info', 'Icon reset', `"${ctxTarget.title}" uses the shared icon again.`);
+  }
+
+  if (act === 'remove' && ctxTarget) {
+    hideLink(ctxTarget);
+  }
+
+  if (act === 'add') openModal();
+
+  if (act === 'reset') {
+    if (!confirm('Reset all icons to default positions?')) return;
+    state.myLayout = [];
+    debouncedSaveLayout();
+    await renderIcons();
+  }
+
+  if (act === 'reset-links') {
+    if (!confirm('Restore original shared links and reset all icons?')) return;
+    const res = await api('/links/reset', { method: 'POST' });
+    if (res && res.links) {
+      state.sharedLinks = res.links;
+    } else {
+      await loadSharedLinks();
+    }
+    state.myLayout = [];
+    state.hiddenLinks = [];
+    debouncedSaveLayout();
+    await renderIcons();
+    hideMenu();
+  }
+
+  hideMenu();
+});
+
+document.addEventListener('pointerdown', e => {
+  if (!ctxmenu.contains(e.target)) hideMenu();
+}, true);
+
+// ================= Add Link Modal =================
+function openModal() {
+  modalBg.style.display = 'flex';
+  document.getElementById('in-title').focus();
+}
+
+function closeModal() {
+  modalBg.style.display = 'none';
+  ['in-title', 'in-url', 'in-icon', 'in-category'].forEach(id => document.getElementById(id).value = '');
+  const sel = document.getElementById('in-mode');
+  if (sel) sel.value = 'window';
+}
+
+document.getElementById('m-cancel').addEventListener('click', closeModal);
+modalBg.addEventListener('pointerdown', e => { if (e.target === modalBg) closeModal(); });
+
+document.getElementById('m-add').addEventListener('click', async () => {
+  const title = document.getElementById('in-title').value.trim();
+  let url = document.getElementById('in-url').value.trim();
+  const icon = document.getElementById('in-icon').value.trim();
+  const category = document.getElementById('in-category').value.trim() || 'General';
+  const mode = document.getElementById('in-mode').value;
+
+  if (!title || !url) return;
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+
+  const newLink = await api('/links', { method: 'POST', body: { title, url, icon, category, mode } });
+  if (newLink && newLink.ok) {
+    await loadSharedLinks();
+    const link = state.sharedLinks.find(l => l.id === newLink.id);
+    if (link) {
+      const ICON_W = 84;
+      const ICON_H = 60;
+      const TOP_BAR = 28;
+      const BOTTOM_BAR = 28;
+
+      let posX, posY;
+      if (ctxPos.x && ctxPos.y) {
+        posX = Math.max(0, Math.min(ctxPos.x, innerWidth - ICON_W));
+        posY = Math.max(TOP_BAR, Math.min(ctxPos.y, innerHeight - TOP_BAR - BOTTOM_BAR - ICON_H));
+      } else {
+        const free = getNextPosition();
+        posX = free.x;
+        posY = free.y;
+      }
+
+      const pos = { linkId: link.id, x: posX, y: posY };
+      state.myLayout.push(pos);
+      debouncedSaveLayout();
+      await renderIcons();
+    }
+    closeModal();
+  }
+});
+
+['in-title', 'in-url', 'in-icon', 'in-category'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('m-add').click();
+    if (e.key === 'Escape') closeModal();
+  });
+});
+
+// ================= Edit Link Modal =================
+const editModalBg = document.getElementById('edit-modal-bg');
+let editingLink = null;
+
+function openEditModal(link) {
+  editingLink = link;
+  const admin = userIsAdmin();
+  const editEl = document.getElementById('edit-modal');
+
+  editModalBg.style.display = 'flex';
+
+  // --- Populate form ---
+  document.getElementById('ed-title').value = link.title;
+  document.getElementById('ed-url').value = link.url;
+  document.getElementById('ed-icon').value = link.icon || '';
+  document.getElementById('ed-category').value = link.category || 'General';
+  document.getElementById('ed-mode').value = link.mode === 'tab' ? 'tab' : 'window';
+  document.getElementById('ed-local-icon').value = getLayoutItem(link.id)?.icon || '';
+
+  ['ed-title', 'ed-url', 'ed-icon', 'ed-category', 'ed-mode'].forEach(id => {
+    document.getElementById(id).disabled = !admin;
+  });
+  document.getElementById('ed-delete').style.display = admin ? '' : 'none';
+  document.querySelector('#edit-modal-bg .hint').textContent = admin
+    ? 'Editing the shared fields changes this link for every user.'
+    : 'You can only change your personal icon.';
+
+  document.getElementById(admin ? 'ed-title' : 'ed-local-icon').focus();
+}
+
+function closeEditModal() {
+  editModalBg.style.display = 'none';
+  editingLink = null;
+}
+
+document.getElementById('ed-cancel').addEventListener('click', closeEditModal);
+editModalBg.addEventListener('pointerdown', e => {
+  if (e.target === editModalBg) closeEditModal();
+});
+
+document.getElementById('ed-save').addEventListener('click', async () => {
+  if (!editingLink) return;
+
+  const localIcon = document.getElementById('ed-local-icon').value.trim();
+  // Personal icon only — no server write needed
+  if (!userIsAdmin()) {
+    await setLocalIcon(editingLink, localIcon);
+    notify('success', 'Icon updated', `"${editingLink.title}" uses your icon.`);
+    closeEditModal();
+    return;
+  }
+
+  const title = document.getElementById('ed-title').value.trim();
+  let url = document.getElementById('ed-url').value.trim();
+  const icon = document.getElementById('ed-icon').value.trim();
+  const category = document.getElementById('ed-category').value.trim() || 'General';
+  const mode = document.getElementById('ed-mode').value === 'tab' ? 'tab' : 'window';
+
+  if (!title || !url) return notify('error', 'Missing fields', 'Title and URL are required.');
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+
+  const res = await api(`/links/${editingLink.id}`, {
+    method: 'PUT', body: { title, url, icon, category, mode }
+  });
+
+  if (!res || !res.ok) {
+    return notify('error', 'Update failed', 'Server rejected the change.');
+  }
+
+  Object.assign(editingLink, res.link);
+  await loadSharedLinks();
+  await setLocalIcon(editingLink, localIcon);
+  notify('success', 'Link updated', title);
+  closeEditModal();
+});
+
+document.getElementById('ed-delete').addEventListener('click', async () => {
+  if (!editingLink || !confirm(`Delete "${editingLink.title}" for ALL users?`)) return;
+  const target = editingLink;
+  const res = await api(`/links/${target.id}`, { method: 'DELETE' });
+  if (res && res.ok) {
+    closeWindow(target.url + '__' + target.id);
+    state.myLayout = state.myLayout.filter(i => i.linkId !== target.id);
+    await loadSharedLinks();
+    await saveLayoutWithStatus();
+    await renderIcons();
+    notify('success', 'Link deleted', target.title);
+    closeEditModal();
+  } else {
+    notify('error', 'Delete failed', 'Admin permission required.');
+  }
+});
+
+['ed-title', 'ed-url', 'ed-icon', 'ed-category', 'ed-local-icon'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('ed-save').click();
+    if (e.key === 'Escape') closeEditModal();
+  });
+});
+
+// ================= Clock =================
+function tickClock() {
+  clock.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+// ================= Init =================
+document.getElementById('btn-login').addEventListener('click', login);
+document.getElementById('btn-logout').addEventListener('click', logout);
+
+async function init() {
+  try {
+    // [CHANGED] removed: await fetchCsrfToken(); — tokens are now fetched lazily
+    await loadSharedLinks();
+    await loadUser();
+    if (state.user) {
+      await loadLayout();
+      await syncGuestLayoutToServer();
+      await renderIcons();
+      await loadWallpaper();
+      setStatus('Synced', false);
+    } else {
+      setStatus('Guest mode — changes not synced', false);
+    }
+  } catch (e) {
+    setStatus('Connection error — some features may be unavailable', true);
+    notify('error', 'Connection error', 'Could not connect to the server. Please check your internet connection.');
+  }
+}
+init();

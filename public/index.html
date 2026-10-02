@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <title>Web Desk</title>
+  <meta charset="UTF-8">
+  <!-- index.html -->
+  <script nonce="%%NONCE%%">document.documentElement.dataset.theme = localStorage.getItem('desktop_theme') || 'light';</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@200;300;400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="ambient.css">
+</head>
+<body>
+
+<!-- Wallpaper Layer -->
+<div id="wallpaper"></div>
+<!--<div class="starfield" aria-hidden="true"></div>-->
+<!--<div class="gradient-bg">
+  <svg xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <filter id="goo">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur" />
+        <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -8" result="goo" />
+        <feBlend in="SourceGraphic" in2="goo" />
+      </filter>
+    </defs>
+  </svg>
+  <div class="gradients-container">
+    <div class="g1"></div>
+    <div class="g2"></div>
+    <div class="g3"></div>
+    <div class="g4"></div>
+    <div class="g5"></div>
+    <div class="interactive"></div>
+  </div>
+</div>-->
+
+<!-- User Bar -->
+<div id="user-bar">
+  <span>👤 <span id="user-name">Guest</span></span>
+  <button id="btn-login">Login</button>
+  <button id="btn-logout" style="display:none">Logout</button>
+  <button id="btn-wallpaper">🖼️ Wallpaper</button>
+  <button id="btn-theme" title="Toggle theme">🌙</button>
+  <span class="spacer"></span>
+  <span id="sync-status">Connecting...</span>
+</div>
+
+<!-- Desktop Area -->
+<div id="desktop" tabindex="0"></div>
+
+<!-- Taskbar -->
+<div id="taskbar">
+  <button id="btn-start">☰ Start</button>
+  <div id="taskbar-items" style="display:flex;gap:6px;flex:1;"></div>
+  <span id="clock"></span>
+  <button id="btn-notifications" title="Notifications">🔔<span class="notif-badge" id="notif-badge">0</span></button>
+</div>
+
+<!-- Start Menu -->
+<div id="start-menu">
+  <div class="start-header">
+    <h3 id="start-welcome">Welcome</h3>
+    <p id="start-subtitle">Your workspace</p>
+  </div>
+  <div class="start-search">
+    <input id="start-search-input" placeholder="Search apps...">
+  </div>
+  <div class="start-apps" id="start-apps-list"></div>
+  <div class="start-footer">
+    <button id="btn-start-wallpaper">🖼️ Wallpaper</button>
+    <button id="btn-start-logout" class="danger">🚪 Logout</button>
+  </div>
+</div>
+
+<!-- Notifications Container -->
+<div id="notif-container"></div>
+
+<!-- Context Menu -->
+<div id="ctxmenu"></div>
+
+<!-- Add Link Modal -->
+<div id="modal-bg">
+  <div id="modal">
+    <h3>Add a link</h3>
+    <label>Title</label><input id="in-title" placeholder="e.g. Mail">
+    <label>URL</label><input id="in-url" placeholder="https://homu.mortis.org.uk">
+    <label>Icon URL (optional)</label><input id="in-icon" placeholder="https://homu.mortis.org.uk/icons/dawarich.svg">
+    <label>Category</label><input id="in-category" placeholder="General" value="General">
+    <label>Open in</label>
+    <select id="in-mode">
+      <option value="window">Desktop window (iframe)</option>
+      <option value="tab">New browser tab</option>
+    </select>
+    <div class="row">
+      <button class="ghost" id="m-cancel">Cancel</button>
+      <button class="primary" id="m-add">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- Wallpaper Picker Modal -->
+<div id="wallpaper-modal">
+  <div id="wallpaper-picker">
+    <h3>Choose Wallpaper</h3>
+    <div class="wallpaper-grid" id="wp-grid"></div>
+    <div class="row">
+      <button class="ghost" id="wp-cancel">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Link Modal -->
+<div id="edit-modal-bg">
+  <div id="edit-modal">
+    <h3>Edit link</h3>
+    <label>Title</label><input id="ed-title">
+    <label>URL</label><input id="ed-url">
+    <label>Shared icon URL</label><input id="ed-icon" placeholder="/icons/github.svg or https://...">
+    <label>Category</label><input id="ed-category">
+    <label>Open in</label>
+    <select id="ed-mode">
+      <option value="window">Desktop window (iframe)</option>
+      <option value="tab">New browser tab</option>
+    </select>
+    <label>My icon only (overrides for you)</label><input id="ed-local-icon" placeholder="leave blank to use shared icon">
+    <p class="hint">Editing the shared fields changes this link for every user.</p>
+    <div class="row">
+      <button class="ghost" id="ed-cancel">Cancel</button>
+      <button class="danger" id="ed-delete">Delete</button>
+      <button class="primary" id="ed-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="client.js?v=3.4" nonce="%%NONCE%%"></script>
+
+</body>
+</html>

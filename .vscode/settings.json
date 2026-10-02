@@ -1,0 +1,7 @@
+{
+  "accessibility.accessibleView.closeOnKeyPress": false,
+  "docker.lsp.telemetry": "off",
+  "telemetry.editStats.enabled": false,
+  "idf.telemetry": false,
+  "telemetry.feedback.enabled": false
+}

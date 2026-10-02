@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch webdesk NPM",
+      "type": "node",
+      "request": "launch",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "npm",
+      "stopOnEntry": true,
+      "program": "server.mjs",
+      "runtimeArgs": [
+        "run-script",
+        "debug",
+        "--inspect-brk"
+      ],
+      "env": {
+        "NODE_ENV": "development",
+        "DIR_PREFIX": "./debug",
+        "DB_URL": "postgresql://webdesk:trusdiebgfsgbt343@172.16.1.200:5432/webdesk",
+        "PORT": "3034"
+      },
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    }
+  ]
+}

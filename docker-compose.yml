@@ -1,0 +1,40 @@
+---
+networks:
+  redis:
+    name: redis
+    driver: host
+    external: true
+  priv:
+    name: priv
+    driver: host
+    external: true
+  web:
+    name: web
+    driver: host
+    external: true
+
+services:
+  webdesk:
+    build: .
+    image: webdesk:latest
+    container_name: webdesk
+    hostname: webdesk
+    networks:
+      web:
+        aliases:
+          - webdesk
+    expose:
+      - 3000
+    env_file:
+      - .env
+    environment:
+      - DB_PATH=/app/data/desktop.db
+      - FILES_DIR=/app/data/files
+      - NODE_ENV=dev
+      - PROXY_IP=192.168.240/24
+      - DB_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASS}@${POSTGRES_HOST}:5432/${POSTGRES_DBNAME}
+    volumes:
+      - ${DIR_PREFIX}/webdesk/data:/app/data
+      - ${DIR_PREFIX}/webdesk/files:/app/files
+    restart: unless-stopped
+
