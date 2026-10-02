@@ -1,6 +1,7 @@
 'use strict';
 
 import { THEMES } from '/wallpapers.mjs';
+import { createDockerPanel } from '/docker-monitor.js';
 
 // ================= Config =================
 const API = '/api';
@@ -255,15 +256,12 @@ async function loadUser() {
       document.getElementById('user-name').textContent = user.name || user.email;
       document.getElementById('btn-login').style.display = 'none';
       document.getElementById('btn-logout').style.display = '';
-      loadWallpaper();
     } else {
       state.user = null;
       document.getElementById('user-name').textContent = 'Guest';
       document.getElementById('btn-login').style.display = '';
       document.getElementById('btn-logout').style.display = '';
-      await loadSharedLinks();
-      loadLayoutForGuest();
-      await renderIcons();
+      await loadLayoutForGuest();
     }
   } catch (e) {
     console.error('loadUser failed:', e);
@@ -294,6 +292,19 @@ async function saveWallpaper(wallpaper) {
   } else {
     notify('error', 'Wallpaper save failed', api._lastError || 'Could not save wallpaper.');
   }
+}
+
+const GUEST_WP_KEY = 'desktop_wallpaper';
+const DEFAULT_WALLPAPER = { kind: 'gradient', ref: 'classic' };
+
+function readGuestWallpaper() {
+  try {
+    const wp = JSON.parse(localStorage.getItem(GUEST_WP_KEY));
+    if (wp && Object.hasOwn(THEMES, wp.kind) && Object.hasOwn(THEMES[wp.kind], wp.ref)) {
+      return { kind: wp.kind, ref: wp.ref };
+    }
+  } catch { /* ignore malformed data */ }
+  return null;
 }
 
 // ================= Theme =================
@@ -329,44 +340,68 @@ function applyWallpaper(wp) {
   switch (wp.kind) {
     case 'none':
       break;
+
     case 'color':
       el.style.background = THEMES.color[wp.ref]?.color || THEMES.color.midnight.color;
       break;
-    // gradient stays the same...
-    case 'ambient':
+
+    case 'gradient':
+      el.style.background = THEMES.gradient[wp.ref]?.css || THEMES.gradient.classic.css;
+      break;
+
+    case 'ambient': {
       const t = THEMES.ambient[wp.ref] || THEMES.ambient['mesh-drift'];
       el.style.setProperty('--amb-base', t.base);
       (t.nodes || []).forEach((n, i) => el.style.setProperty(`--amb-c${i + 1}`, n.c));
 
       if (wp.ref === 'aurora') {
         el.insertAdjacentHTML('afterbegin', `
-      <div class="aur-bands">
-        <div class="aur-band aur-band-1"></div>
-        <div class="aur-band aur-band-2"></div>
-        <div class="aur-band aur-band-3"></div>
-      </div>
-      <div class="aur-horizon"></div>
-      <div class="aur-mountains">
-        <svg viewBox="0 0 1440 200" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M0,200 L0,140 L80,90 L160,130 L260,60 L360,110 L440,50 L520,95 L620,30 L720,80 L820,20 L900,70 L980,40 L1060,85 L1160,35 L1260,90 L1360,55 L1440,80 L1440,200 Z" fill="#020510"/>
-          <path d="M0,200 L0,160 L100,120 L200,150 L320,100 L420,140 L540,90 L640,130 L760,110 L860,145 L960,105 L1080,135 L1180,115 L1300,140 L1440,120 L1440,200 Z" fill="rgba(0,10,8,.95)"/>
-        </svg>
-      </div>
-    `);
+        <div class="aur-bands">
+          <div class="aur-band aur-band-1"></div>
+          <div class="aur-band aur-band-2"></div>
+          <div class="aur-band aur-band-3"></div>
+        </div>
+        <div class="aur-horizon"></div>
+        <div class="aur-mountains">
+          <svg viewBox="0 0 1440 200" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- far ridge -->
+            <path d="M0,200 L0,120
+                     C110,120 110,70 220,80
+                     C350,70 350,100 480,90
+                     C590,100 590,40 800,80
+                     C820,80 820,95 940,95
+                     C1010,75 980,55 1080,55
+                     C1310,55 1310,90 1440,90
+                     L1440,200 Z" fill="#0d0d0d"/>
+            <!-- near hills -->
+            <path d="M0,200 L0,150
+                     C80,150 80,175 180,155
+                     C280,125 230,165 400,145
+                     C510,145 410,130 660,140
+                     C740,120 740,150 860,140
+                     C980,150 980,138 1100,158
+                     C1100,148 1100,175 1270,165
+                     C1370,145 1370,180 1440,160
+                     L1440,200 Z" fill="rgba(0,10,8,.95)"/>
+          </svg>
+        </div>
+        `);
       }
       break;
+    }
+
     case 'image':
       el.style.backgroundImage = `url("/api/wallpapers/${wp.ref}")`;
       el.style.backgroundSize = 'cover';
       el.style.backgroundPosition = 'center';
       break;
   }
-  currentWallpaper = wp;
 }
+
 
 async function loadWallpaper() {
   if (!state.user) {
-    applyWallpaper({ kind: 'gradient', ref: 'classic' });
+    applyWallpaper(readGuestWallpaper() || DEFAULT_WALLPAPER);
     return;
   }
   try {
@@ -402,12 +437,12 @@ function renderWallpaperPicker(activeTab = 0) {
   // Rebuild tab bar
   const tabBar = document.createElement('div');
   tabBar.className = 'wallpaper-picker-tabs';
-const tabs = [
-  { key: 'color',    label: 'Colors' },      // shorter so 4 tabs fit in 360px
-  { key: 'gradient', label: 'Gradients' },
-  { key: 'ambient',  label: 'Ambient' },
-  { key: 'image',    label: 'Image' },
-];
+  const tabs = [
+    { key: 'color', label: 'Colors' },      // shorter so 4 tabs fit in 360px
+    { key: 'gradient', label: 'Gradients' },
+    { key: 'ambient', label: 'Ambient' },
+    { key: 'image', label: 'Image' },
+  ];
   const flexTab = document.createElement('div');
   flexTab.id = "wp-tab";
   tabs.forEach((tab, index) => {
@@ -420,18 +455,12 @@ const tabs = [
   tabBar.appendChild(flexTab);
   grid.appendChild(tabBar);
 
-  const categories = [
-    { key: 'color', label: 'Solid Colors' },
-    { key: 'gradient', label: 'Gradients' },
-    { key: 'ambient', label: 'Ambient' },
-  ];
-
-const cat = tabs[activeTab];
-if (cat.key === 'image') {
-  renderUploadPanel(grid);
-  return;
-}
-const themes = THEMES[cat.key];
+  const cat = tabs[activeTab];
+  if (cat.key === 'image') {
+    renderUploadPanel(grid);
+    return;
+  }
+  const themes = THEMES[cat.key];
 
   Object.entries(themes).forEach(([id, t]) => {
     const div = document.createElement('div');
@@ -477,6 +506,7 @@ const themes = THEMES[cat.key];
     div.onclick = () => {
       if (!state.user) {
         applyWallpaper({ kind: cat.key, ref: id });
+        localStorage.setItem(GUEST_WP_KEY, JSON.stringify({ kind: cat.key, ref: id }));
         grid.querySelectorAll('.wallpaper-option').forEach(el => el.classList.remove('selected'));
         div.classList.add('selected');
         return;
@@ -501,6 +531,14 @@ const themes = THEMES[cat.key];
 }
 
 // Client-side image compression
+function canvasToFile(canvas, type, quality, name) {
+  return new Promise(resolve => {
+    canvas.toBlob(blob => {
+      resolve(blob && blob.type === type ? new File([blob], name, { type }) : null);
+    }, type, quality);
+  });
+}
+
 async function compressImage(file) {
   try {
     const bitmap = await createImageBitmap(file);
@@ -521,16 +559,7 @@ async function compressImage(file) {
     ctx.drawImage(bitmap, 0, 0, w, h);
     bitmap.close();
 
-    // Encode to WebP with quality 0.82
-    return new Promise((resolve) => {
-      canvas.toBlob((blob) => {
-        if (blob && blob.type === 'image/webp') {
-          resolve(new File([blob], 'wallpaper.webp', { type: 'image/webp' }));
-        } else {
-          resolve(null);
-        }
-      }, 'image/webp', 0.82);
-    });
+    return (await canvasToFile(canvas, 'image/webp', 0.82, 'wallpaper.webp')) || (await canvasToFile(canvas, 'image/jpeg', 0.85, 'wallpaper.jpg'));
   } catch (e) {
     console.error('Compression failed:', e);
     return null;
@@ -564,9 +593,9 @@ function renderUploadPanel(grid) {
     </div>
     <div class="wpu-list"></div>`;
 
-  const drop  = panel.querySelector('.wpu-drop');
+  const drop = panel.querySelector('.wpu-drop');
   const input = panel.querySelector('.wpu-input');
-  const list  = panel.querySelector('.wpu-list');
+  const list = panel.querySelector('.wpu-list');
   let busy = false;
 
   function createItem(file) {
@@ -588,9 +617,9 @@ function renderUploadPanel(grid) {
     item.querySelector('.wpu-name-text').textContent = file.name;
     item.querySelector('.wpu-size').textContent = `${(file.size / 1048576).toFixed(2)} MB`;
 
-    const fill     = item.querySelector('.wpu-fill');
-    const status   = item.querySelector('.wpu-status');
-    const doneEl   = item.querySelector('.wpu-done');
+    const fill = item.querySelector('.wpu-fill');
+    const status = item.querySelector('.wpu-status');
+    const doneEl = item.querySelector('.wpu-done');
     const retryBtn = item.querySelector('.wpu-action');
     let onRetry = null;
     retryBtn.addEventListener('click', () => onRetry?.());
@@ -636,7 +665,7 @@ function renderUploadPanel(grid) {
     uploadWallpaperFile(file, ui).finally(() => { busy = false; });
   }
 
-  drop.addEventListener('dragover',  e => { e.preventDefault(); drop.classList.add('drag'); });
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag'); });
   drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
   drop.addEventListener('drop', e => {
     e.preventDefault();
@@ -657,7 +686,7 @@ async function uploadWallpaperFile(file, ui) {
 
     ui.setProgress(40, 'Uploading…');
     const formData = new FormData();
-    formData.append('file', compressed, 'wallpaper.webp');
+    formData.append('file', compressed, compressed.name);
 
     const res = await withCsrf('/wallpapers/upload', { method: 'POST', body: formData });
     if (!res.ok) {
@@ -791,7 +820,8 @@ function deselect() {
 }
 
 document.addEventListener('keydown', e => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  const tag = e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
 
   if (e.key === 'Escape') closeStartMenu();
 
@@ -841,6 +871,86 @@ function makeDraggable(el, onEnd) {
     el.addEventListener('pointermove', mv);
     el.addEventListener('pointerup', up);
   });
+}
+
+// ================= Docker Monitor App =================
+
+const DOCKER_APP = { id: 'docker', title: 'Docker', url: 'app://docker' };
+
+function openDockerMonitor() {
+  if (!userIsAdmin()) {
+    notify('error', 'Admins only', 'Docker monitor requires admin permission.');
+    return;
+  }
+  if (openWins.has(DOCKER_APP.url)) { restoreWin(DOCKER_APP.url); return; }
+
+  const win = document.createElement('div');
+  win.className = 'window';
+  win.style.width = '820px';
+  win.style.height = '480px';
+  win.style.left = Math.max(0, innerWidth / 2 - 410) + 'px';
+  win.style.top = Math.max(0, innerHeight / 2 - 240) + 'px';
+  win.style.zIndex = ++zTop;
+
+  win.innerHTML = `
+    <div class="titlebar">
+      <span class="title">🐳 Docker</span>
+      <button data-act="min" title="Minimize">–</button>
+      <button data-act="close" title="Close">✕</button>
+    </div>
+    <div class="dkr-host"></div>
+    <div class="resize-handle resize-n"></div>
+    <div class="resize-handle resize-s"></div>
+    <div class="resize-handle resize-e"></div>
+    <div class="resize-handle resize-w"></div>
+    <div class="resize-handle resize-ne"></div>
+    <div class="resize-handle resize-nw"></div>
+    <div class="resize-handle resize-se"></div>
+    <div class="resize-handle resize-sw"></div>`;
+
+  // Drag by titlebar (same behaviour as the other windows)
+  const bar = win.querySelector('.titlebar');
+  const TITLEBAR_H = 34;
+  const BOTTOM_BAR_HEIGHT = 28;
+
+  bar.addEventListener('pointerdown', e => {
+    if (e.target.tagName === 'BUTTON') return;
+    const sx = e.clientX, sy = e.clientY;
+    const ox = parseFloat(win.style.left), oy = parseFloat(win.style.top);
+    const winH = win.offsetHeight;
+
+    function mv(ev) {
+      const maxY = Math.max(TITLEBAR_H, innerHeight - BOTTOM_BAR_HEIGHT - winH);
+      win.style.left = Math.max(0, ox + ev.clientX - sx) + 'px';
+      win.style.top = Math.max(0, Math.min(maxY, oy + ev.clientY - sy)) + 'px';
+    }
+    function up() {
+      bar.removeEventListener('pointermove', mv);
+      bar.removeEventListener('pointerup', up);
+    }
+    bar.setPointerCapture(e.pointerId);
+    bar.addEventListener('pointermove', mv);
+    bar.addEventListener('pointerup', up);
+  });
+
+  win.addEventListener('pointerdown', () => { win.style.zIndex = ++zTop; setActive(DOCKER_APP.url); });
+  win.querySelector('[data-act="close"]').onclick = () => closeWindow(DOCKER_APP.url);
+  win.querySelector('[data-act="min"]').onclick = () => minimizeWin(DOCKER_APP.url);
+  makeResizable(win);
+
+  // Mount the panel. Polling pauses while the window is minimised.
+  const panel = createDockerPanel({
+    api,
+    intervalMs: 5000,
+    isActive: () => !win.classList.contains('minimized'),
+  });
+  win.querySelector('.dkr-host').appendChild(panel.el);
+
+  desktop.appendChild(win);
+  addTaskButton(DOCKER_APP, win, DOCKER_APP.url);
+  openWins.get(DOCKER_APP.url).onClose = panel.stop;   // so the timer dies with the window
+
+  panel.start();
 }
 
 // ================= File Manager App =================
@@ -1041,6 +1151,7 @@ const startSearchInput = document.getElementById('start-search-input');
 
 const BUILT_IN_APPS = [
   { id: 'filemanager', name: 'File Manager', cat: 'System', icon: '📁' },
+  { id: 'docker', name: 'Docker Monitor', cat: 'System', icon: '🐳' },
   { id: 'wallpaper', name: 'Change Wallpaper', cat: 'Settings', icon: '🖼️' },
 ];
 
@@ -1080,6 +1191,7 @@ function renderStartApps(filter = '') {
   };
 
   BUILT_IN_APPS.forEach(app => {
+    if (app.id === 'docker' && !userIsAdmin()) return;      // NEW
     if (lowerFilter && !app.name.toLowerCase().includes(lowerFilter)) return;
     addItem(app.cat, {
       type: 'app',
@@ -1089,6 +1201,7 @@ function renderStartApps(filter = '') {
         closeStartMenu();
         if (app.id === 'filemanager') openFileManager();
         if (app.id === 'wallpaper') document.getElementById('btn-wallpaper').click();
+        if (app.id === 'docker') openDockerMonitor();        // NEW
       }
     });
   });
@@ -1303,10 +1416,18 @@ function updateWelcomeText() {
 }
 
 // ================= Windows =================
+function safeHttpUrl(raw) {
+  try {
+    const u = new URL(raw, location.origin);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : null;
+  } catch { return null; }
+}
 function openWindow(link) {
-  // Links flagged as 'tab' bypass the desktop window entirely
+  const url = safeHttpUrl(link.url);
+  if (!url) { notify('error', 'Blocked link', 'Only http(s) links can be opened.'); return; }
+
   if (link.mode === 'tab') {
-    window.open(link.url, '_blank', 'noopener,noreferrer');
+    window.open(url, '_blank', 'noopener,noreferrer');
     return;
   }
 
@@ -1466,6 +1587,7 @@ function restoreWin(winKey) {
 function closeWindow(winKey) {
   const w = openWins.get(winKey);
   if (!w) return;
+  w.onClose?.();
   w.win.remove();
   w.btn.remove();
   openWins.delete(winKey);
@@ -1543,15 +1665,13 @@ ctxmenu.addEventListener('click', async e => {
   if (act === 'open' && ctxTarget) openWindow(ctxTarget);
 
   if (act === 'open-newtab' && ctxTarget) {
-    window.open(ctxTarget.url, '_blank');
+    const url = safeHttpUrl(ctxTarget.url);
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   if (act === 'open-newwindow' && ctxTarget) {
-    window.open(
-      ctxTarget.url,
-      '_blank',
-      'width=1280,height=800,noopener,noreferrer'
-    );
+    const url = safeHttpUrl(ctxTarget.url);
+    if (url) window.open(url, '_blank', 'width=1280,height=800,noopener,noreferrer');
   }
 
   if (act === 'edit' && ctxTarget) openEditModal(ctxTarget);
@@ -1771,16 +1891,16 @@ document.getElementById('btn-logout').addEventListener('click', logout);
 
 async function init() {
   try {
-    // [CHANGED] removed: await fetchCsrfToken(); — tokens are now fetched lazily
     await loadSharedLinks();
     await loadUser();
+    loadWallpaper();
     if (state.user) {
       await loadLayout();
       await syncGuestLayoutToServer();
       await renderIcons();
-      await loadWallpaper();
       setStatus('Synced', false);
     } else {
+      await renderIcons();
       setStatus('Guest mode — changes not synced', false);
     }
   } catch (e) {

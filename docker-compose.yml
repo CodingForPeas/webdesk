@@ -19,20 +19,20 @@ services:
     image: webdesk:latest
     container_name: webdesk
     hostname: webdesk
-    networks:
-      web:
-        aliases:
-          - webdesk
+    networks: [priv,web]
     expose:
       - 3000
     env_file:
       - .env
     environment:
-      - DB_PATH=/app/data/desktop.db
-      - FILES_DIR=/app/data/files
-      - NODE_ENV=dev
-      - PROXY_IP=192.168.240/24
-      - DB_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASS}@${POSTGRES_HOST}:5432/${POSTGRES_DBNAME}
+      DB_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASS}@${POSTGRES_HOST}:5432/${POSTGRES_DBNAME}
+      PROXY_IP: ${PROXY_IP:?Set PROXY_IP}
+      NODE_ENV: ${NODE_ENV:?Set NODE_ENV}
+      DS_HOST: ${DS_HOST:?Set DS_HOST}
+      FILES_DIR: /app/data/files
+    command:
+#     - --providers.docker.endpoint=tcp://socket-proxy:2375
+#     - --providers.docker.exposedbydefault=false
     volumes:
       - ${DIR_PREFIX}/webdesk/data:/app/data
       - ${DIR_PREFIX}/webdesk/files:/app/files
