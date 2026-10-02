@@ -40,7 +40,7 @@ linksRouter.put('/:id', getUser, requireAdmin, async (req, res) => {
     url:      body.url      ?? existing.url,
     icon:     body.icon     ?? existing.icon,
     category: body.category ?? existing.category,
-    mode:     body.mode     ?? existing.mode ?? 'window',
+    mode:     body.mode     ?? existing.mode ?? 'tab',
   };
   if (next_.mode !== 'tab') next_.mode = 'window';
   if (!next_.title || !next_.url) throw new HttpError(400, 'Title and URL are required');

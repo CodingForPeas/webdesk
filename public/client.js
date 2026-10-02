@@ -954,7 +954,7 @@ function openDockerMonitor() {
 }
 
 // ================= File Manager App =================
-const FILE_MANAGER = { id: 'filemanager', title: 'File Manager', url: 'app://files' };
+const FILE_MANAGER = { id: 'filemanager', title: 'File Manager', url: 'app://files'};
 
 function openFileManager() {
   if (openWins.has(FILE_MANAGER.url)) { restoreWin(FILE_MANAGER.url); return; }
