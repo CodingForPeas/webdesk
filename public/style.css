@@ -345,7 +345,7 @@ html, body {
   display: none;
   align-items: center;
   justify-content: center;
-  z-index: 100002;
+  z-index: 100022;
 }
 
 #modal,
@@ -581,7 +581,10 @@ html, body {
   from { transform: translateY(16px); opacity: 0; }
   to   { transform: translateY(0);    opacity: 1; }
 }
-#start-menu.open { display: flex; }
+#start-menu.open {
+  display: flex;
+  z-index: 100080;
+}
 
 .start-header {
   padding: 18px 18px 14px;
@@ -994,7 +997,10 @@ html, body {
   box-shadow: 0 16px 48px rgba(0,0,0,.7), 0 0 40px rgba(0,255,200,.05);
   z-index: 99999;
 }
-.start-folder-body.flyout-open { display: block; }
+.start-folder-body.flyout-open {
+  display: block;
+  z-index: 100080;
+}
 
 /* Search mode: the body is moved inside the folder */
 .start-folder.flyout-open > .start-folder-body { display: block; }
