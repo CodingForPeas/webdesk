@@ -31,11 +31,12 @@ html, body {
 /* ============================================================
    ICONS
    ============================================================ */
+:root { --icon-size: 48px; }
 .icon {
   color: #fff;
   text-shadow: 0 0 12px rgba(0,255,200,.4), 0 1px 3px rgba(0,0,0,.9);
   position: absolute;
-  width: 84px;
+  width: calc(var(--icon-size) + 36px);
   padding: 8px 4px;
   text-align: center;
   cursor: default;
@@ -56,7 +57,7 @@ html, body {
 }
 .icon.dragging { opacity: .7; transform: scale(1.05); }
 .icon img {
-  width: 48px; height: 48px;
+  width: var(--icon-size); height: var(--icon-size);
   pointer-events: none;
   transition: filter 0.15s, transform 0.15s;
 }
@@ -71,7 +72,7 @@ html, body {
   color: rgba(255,255,255,.85);
 }
 .fm-icon { display: flex; flex-direction: column; align-items: center; }
-.fm-icon > span:first-child { font-size: 48px; line-height: 1; margin-top: 0; }
+.fm-icon > span:first-child { font-size: var(--icon-size); line-height: 1; margin-top: 0; }
 
 /* ============================================================
    WINDOWS
@@ -492,6 +493,19 @@ html, body {
 #edit-modal .danger:hover {
   background: rgba(255,102,170,.16);
   box-shadow: 0 0 14px rgba(255,102,170,.15);
+}
+
+#wallpaper-picker input[type="range"] {
+  width: 100%;
+  margin-top: 6px;
+  accent-color: var(--aui-teal);
+  cursor: pointer;
+}
+
+#icon-size-value {
+  float: right;
+  letter-spacing: 1px;
+  color: var(--aui-teal-dim);
 }
 
 .hint {

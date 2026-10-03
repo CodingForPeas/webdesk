@@ -5,6 +5,7 @@ import { createDockerPanel } from '/docker-monitor.js';
 
 // ================= Config =================
 const API = '/api';
+const MIN_ICON = 32, MAX_ICON = 96, DEFAULT_ICON = 48;
 
 let state = {
   user: null,
@@ -65,11 +66,11 @@ const debouncedSaveLayout = debounce(() => saveLayoutWithStatus(), 500);
 function getNextPosition() {
   const occupied = new Set();
   state.myLayout.forEach(item => occupied.add(`${item.x},${item.y}`));
-
+  const cw = state.iconSize + 42, ch = state.iconSize + 62;   // 90 x 110 at 48px
   let x = 24, y = 24;
   while (occupied.has(`${x},${y}`)) {
-    x += 90;
-    if (x > 250) { x = 24; y += 110; }
+    x += cw;
+    if (x > 250 + state.iconSize) { x = 24; y += ch; }
     if (y > 1000) { x = 24; y = 24; break; }
   }
   return { x, y };
@@ -112,6 +113,20 @@ async function saveLayoutWithStatus() {
     return { ok: true };
   }
 }
+
+function applyIconSize(px) {
+  px = Math.min(MAX_ICON, Math.max(MIN_ICON, Math.round(Number(px)) || DEFAULT_ICON));
+  state.iconSize = px;
+  document.documentElement.style.setProperty('--icon-size', px + 'px');
+  localStorage.setItem('desktop_icon_size', String(px));
+
+  // Looked up here (not cached in consts) so this can safely run before the DOM refs below exist
+  const slider = document.getElementById('icon-size-slider');
+  const label = document.getElementById('icon-size-value');
+  if (slider && Number(slider.value) !== px) slider.value = px;
+  if (label) label.textContent = px + 'px';
+}
+applyIconSize(localStorage.getItem('desktop_icon_size'));
 
 // ================= Icon resolution =================
 function getLayoutItem(linkId) {
@@ -442,6 +457,10 @@ document.getElementById('wp-cancel').addEventListener('click', () => {
 
 wallpaperModal.addEventListener('pointerdown', e => {
   if (e.target === wallpaperModal) wallpaperModal.style.display = 'none';
+});
+
+document.getElementById('icon-size-slider').addEventListener('input', e => {
+  applyIconSize(e.target.value);
 });
 
 // ToDo: Preview
@@ -790,7 +809,7 @@ function buildIcon(link, x, y) {
     this.onerror = null;
     this.src = FALLBACK_ICON;
   };
-  img.style.cssText = 'width:48px;height:48px;pointer-events:none;transition:filter 0.15s,transform 0.15s;';
+  img.style.cssText = 'pointer-events:none;transition:filter 0.15s,transform 0.15s;';
 
   const label = document.createElement('span');
   label.textContent = link.title;
@@ -860,6 +879,7 @@ function makeDraggable(el, onEnd) {
 
   el.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
+    const ICON_W = el.offsetWidth, ICON_H = el.offsetHeight;
     const sx = e.clientX, sy = e.clientY;
     const ox = parseFloat(el.style.left), oy = parseFloat(el.style.top);
     let moved = false;
@@ -1391,7 +1411,7 @@ function addFileManagerIcon() {
   const fmPos = state.fmIconPos || { x: 24, y: 740 };
   el.style.left = fmPos.x + 'px';
   el.style.top = fmPos.y + 'px';
-  el.innerHTML = `<span style="font-size:48px;line-height:48px;display:block;">📁</span><span>Files</span>`;
+  el.innerHTML = `<span style="display:block;line-height:1;">📁</span><span>Files</span>`;
 
   makeDraggable(el, () => {
     state.fmIconPos = {
