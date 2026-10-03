@@ -855,7 +855,8 @@ document.addEventListener('keydown', e => {
 });
 
 // ================= Icon collision =================
-const ESCAPE_FORCE = 40;            // px of pointer overshoot needed before a pinned icon slips sideways
+const INITIAL_FRICTION = 12;         // px to drag past overlap before pushing starts
+const MAX_FORCE_MULTIPLIER = 2;     // max multiplier for push distance
 const WALL_SNUG = 4;                // how close to a wall counts as "pinned"
 const ICON_GAP = 5;                 // breathing room between icons
 const DESK_TOP = 28, DESK_BOTTOM = 28;
@@ -877,7 +878,7 @@ function inBounds(r) {
 }
 
 // Simulate the push on copies of the rects; nothing touches the DOM until it succeeds.
-function settle(pusher, rects, depth = 0, drag = null, force = Infinity) {
+function settle(pusher, rects, depth = 0, drag = null, force = Infinity, friction = 0) {
   if (depth > 6) return false;
   const p = rects.get(pusher);
   for (const [other, r] of rects) {
@@ -889,30 +890,32 @@ function settle(pusher, rects, depth = 0, drag = null, force = Infinity) {
     const overlapY = (p.h + r.h) / 2 + ICON_GAP - Math.abs(dy);
     const horizontal = overlapX < overlapY;
 
-    // Only the icon under the mouse gets this check. A pinned icon resists
-    // being shoved along the wall until you push hard enough.
-    if (depth === 0 && drag && force < ESCAPE_FORCE) {
-      const dragAxis = Math.abs(drag.x) >= Math.abs(drag.y) ? 'x' : 'y';
-      const shoveAxis = horizontal ? 'x' : 'y';
-      if (shoveAxis !== dragAxis && pinned(r, dragAxis)) return false;
+    // Initial friction: don't push until dragged past the overlap
+    if (depth === 0 && drag && friction < INITIAL_FRICTION) return false;
+
+    // Force multiplier: scale push distance by how hard you’re shoving
+    let pushDist = horizontal ? overlapX : overlapY;
+    if (force > 0) {
+      const mult = Math.min(MAX_FORCE_MULTIPLIER, 1 + (force - INITIAL_FRICTION) / 100);
+      pushDist *= mult;
     }
 
-    if (horizontal) r.x += (dx < 0 ? -1 : 1) * overlapX;
-    else r.y += (dy < 0 ? -1 : 1) * overlapY;
+    if (horizontal) r.x += (dx < 0 ? -1 : 1) * pushDist;
+    else            r.y += (dy < 0 ? -1 : 1) * pushDist;
 
     if (!inBounds(r)) return false;
-    if (!settle(other, rects, depth + 1)) return false;
+    if (!settle(other, rects, depth + 1, drag, force, friction)) return false;
   }
   return true;
 }
 
-function tryPlace(el, nx, ny, rects, force) {
+function tryPlace(el, nx, ny, rects, force, friction) {
   const prev = rects.get(el);
   const drag = { x: nx - prev.x, y: ny - prev.y };
   const next = new Map([...rects].map(([k, r]) => [k, { ...r }]));
   next.get(el).x = nx;
   next.get(el).y = ny;
-  return settle(el, next, 0, drag, force) ? next : null;
+  return settle(el, next, 0, drag, force, friction) ? next : null;
 }
 
 // Saves one icon's position into the right place (layout vs. the Files icon)
@@ -959,10 +962,13 @@ function makeDraggable(el, onEnd) {
 
       // Full move first, then slide along one axis if that's blocked
       const cur = rects.get(el);
-      const force = Math.hypot(nx - cur.x, ny - cur.y);
-      const next = tryPlace(el, nx, ny, rects, force)
-        || tryPlace(el, nx, cur.y, rects, force)
-        || tryPlace(el, cur.x, ny, rects, force);
+      const dragDist = Math.hypot(nx - cur.x, ny - cur.y);
+      const friction = Math.max(0, dragDist - (ICON_GAP + 1));  // start counting after overlap + 1px
+      const force = Math.max(0, dragDist - INITIAL_FRICTION);
+
+      const next = tryPlace(el, nx, ny, rects, force, friction)
+        || tryPlace(el, nx, cur.y, rects, force, friction)
+        || tryPlace(el, cur.x, ny, rects, force, friction);
       if (!next) return;
       rects = next;
 
