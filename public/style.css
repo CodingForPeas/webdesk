@@ -55,6 +55,7 @@ html, body {
     drop-shadow(0 0 4px rgba(0,255,200,.9))
     drop-shadow(0 0 8px rgba(0,170,255,.6));
 }
+
 .icon.dragging { opacity: .7; transform: scale(1.05); }
 .icon img {
   width: var(--icon-size); height: var(--icon-size);
@@ -73,7 +74,10 @@ html, body {
 }
 .fm-icon { display: flex; flex-direction: column; align-items: center; }
 .fm-icon > span:first-child { font-size: var(--icon-size); line-height: 1; margin-top: 0; }
-
+/* Pushed icons glide; the one you're dragging stays instant */
+.icon:not(.dragging) {
+  transition: transform 0.15s, left 0.12s ease-out, top 0.12s ease-out;
+}
 /* ============================================================
    WINDOWS
    ============================================================ */

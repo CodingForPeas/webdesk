@@ -783,6 +783,7 @@ async function renderIcons() {
 function buildIcon(link, x, y) {
   const el = document.createElement('div');
   el.className = 'icon';
+  el.dataset.linkId = link.id;
   el.style.left = x + 'px';
   el.style.top = y + 'px';
 
@@ -853,6 +854,63 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// ================= Icon collision =================
+const ICON_GAP = 5;                 // breathing room between icons
+const DESK_TOP = 28, DESK_BOTTOM = 28;
+
+function rectsOverlap(a, b, gap = 0) {
+  return a.x < b.x + b.w + gap && a.x + a.w + gap > b.x &&
+         a.y < b.y + b.h + gap && a.y + a.h + gap > b.y;
+}
+
+function inBounds(r) {
+  return r.x >= 0 && r.x + r.w <= innerWidth &&
+         r.y >= DESK_TOP && r.y + r.h <= innerHeight - DESK_BOTTOM;
+}
+
+// Simulate the push on copies of the rects; nothing touches the DOM until it succeeds.
+function settle(pusher, rects, depth = 0) {
+  if (depth > 6) return false;                       // chain too long, give up
+  const p = rects.get(pusher);
+  for (const [other, r] of rects) {
+    if (other === pusher || !rectsOverlap(p, r, ICON_GAP)) continue;
+
+    const dx = (r.x + r.w / 2) - (p.x + p.w / 2);
+    const dy = (r.y + r.h / 2) - (p.y + p.h / 2);
+    const overlapX = (p.w + r.w) / 2 + ICON_GAP - Math.abs(dx);
+    const overlapY = (p.h + r.h) / 2 + ICON_GAP - Math.abs(dy);
+
+    // Shove along whichever axis needs the smaller nudge
+    if (overlapX < overlapY) r.x += (dx < 0 ? -1 : 1) * overlapX;
+    else                     r.y += (dy < 0 ? -1 : 1) * overlapY;
+
+    if (!inBounds(r)) return false;                  // backed into a wall
+    if (!settle(other, rects, depth + 1)) return false;  // chain reaction
+  }
+  return true;
+}
+
+function tryPlace(el, nx, ny, rects) {
+  const next = new Map([...rects].map(([k, r]) => [k, { ...r }]));
+  next.get(el).x = nx;
+  next.get(el).y = ny;
+  return settle(el, next) ? next : null;
+}
+
+// Saves one icon's position into the right place (layout vs. the Files icon)
+function persistIconPos(el) {
+  const x = parseFloat(el.style.left), y = parseFloat(el.style.top);
+  if (el.dataset.app === 'filemanager') {
+    state.fmIconPos = { x, y };
+    localStorage.setItem('fm_icon_pos', JSON.stringify(state.fmIconPos));
+    return;
+  }
+  const id = Number(el.dataset.linkId);
+  const item = getLayoutItem(id);
+  if (item) { item.x = x; item.y = y; }
+  else state.myLayout.push({ linkId: id, x, y });
+}
+
 function makeDraggable(el, onEnd) {
   const TOP_BAR_HEIGHT = 28;
   const BOTTOM_BAR_HEIGHT = 28;
@@ -865,14 +923,36 @@ function makeDraggable(el, onEnd) {
     let moved = false;
     el.setPointerCapture(e.pointerId);
 
+    // Snapshot every icon (including the Files icon) at drag start
+    let rects = new Map();
+    desktop.querySelectorAll('.icon').forEach(i =>
+      rects.set(i, { x: i.offsetLeft, y: i.offsetTop, w: i.offsetWidth, h: i.offsetHeight }));
+    const touched = new Set();   // icons that got pushed and need saving
+
     function mv(ev) {
       const dx = ev.clientX - sx, dy = ev.clientY - sy;
       if (!moved && Math.abs(dx) + Math.abs(dy) > 3) { moved = true; el.classList.add('dragging'); }
       if (!moved) return;
+
       const maxX = Math.max(0, innerWidth - ICON_W);
       const maxY = Math.max(0, innerHeight - TOP_BAR_HEIGHT - BOTTOM_BAR_HEIGHT - ICON_H);
-      el.style.left = Math.max(0, Math.min(maxX, ox + dx)) + 'px';
-      el.style.top = Math.max(TOP_BAR_HEIGHT, Math.min(maxY, oy + dy)) + 'px';
+      const nx = Math.max(0, Math.min(maxX, ox + dx));
+      const ny = Math.max(TOP_BAR_HEIGHT, Math.min(maxY, oy + dy));
+
+      // Full move first, then slide along one axis if that's blocked
+      const cur = rects.get(el);
+      const next = tryPlace(el, nx, ny, rects)
+                || tryPlace(el, nx, cur.y, rects)
+                || tryPlace(el, cur.x, ny, rects);
+      if (!next) return;
+      rects = next;
+
+      rects.forEach((r, i) => {
+        if (parseFloat(i.style.left) === r.x && parseFloat(i.style.top) === r.y) return;
+        i.style.left = r.x + 'px';
+        i.style.top = r.y + 'px';
+        if (i !== el) touched.add(i);
+      });
     }
 
     function up() {
@@ -880,7 +960,10 @@ function makeDraggable(el, onEnd) {
       el.removeEventListener('pointerup', up);
       el.classList.remove('dragging');
       el.releasePointerCapture(e.pointerId);
-      if (moved && onEnd) onEnd();
+      if (!moved) return;
+      touched.forEach(persistIconPos);
+      if ([...touched].some(t => t.dataset.linkId)) debouncedSaveLayout();
+      onEnd?.();
     }
 
     el.addEventListener('pointermove', mv);
