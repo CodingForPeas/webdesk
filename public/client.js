@@ -85,9 +85,8 @@ async function syncGuestLayoutToServer() {
         const existingLayout = state.myLayout || [];
         const existingIds = new Set(existingLayout.map(i => i.linkId));
         parsed.links.forEach(item => {
-          if (!existingIds.has(item.linkId)) {
-            existingLayout.push(item);
-          }
+          const linkId = Number(item.linkId);
+          if (!existingIds.has(linkId)) existingLayout.push({ ...item, linkId });
         });
         state.myLayout = existingLayout;
         await saveLayoutWithStatus();
@@ -99,6 +98,7 @@ async function syncGuestLayoutToServer() {
 
 async function saveLayoutWithStatus() {
   if (state.user) {
+    if (!state.layoutLoaded) return null;
     const res = await api('/layout', { method: 'POST', body: { links: state.myLayout, hiddenLinks: state.hiddenLinks || [] } });
     if (!res) {
       notify('error', 'Layout save failed', 'Could not sync your layout to the server.');
@@ -234,8 +234,7 @@ async function loadLayoutForGuest() {
   if (data) {
     try {
       const parsed = JSON.parse(data);
-      state.myLayout = parsed.links || [];
-      state.hiddenLinks = parsed.hiddenLinks || [];
+      applyLayoutData(parsed);
     } catch {
       state.myLayout = [];
       state.hiddenLinks = [];
@@ -274,11 +273,27 @@ async function loadSharedLinks() {
   if (links) state.sharedLinks = links;
 }
 
+function applyLayoutData(data) {
+  const byId = new Map();
+  for (const raw of data.links || []) {
+    const linkId = Number(raw.linkId);
+    if (!Number.isFinite(linkId)) continue;
+    const prev = byId.get(linkId);
+    if (!prev) byId.set(linkId, { ...raw, linkId });
+    else if (raw.icon && !prev.icon) prev.icon = raw.icon;  // keep first position, salvage icon
+  }
+  state.myLayout = [...byId.values()];
+  state.hiddenLinks = [...new Set((data.hiddenLinks || []).map(Number))];
+}
+
 async function loadLayout() {
   const data = await api('/layout');
   if (data) {
-    state.myLayout = data.links || [];
-    state.hiddenLinks = data.hiddenLinks || [];
+    applyLayoutData(data);
+    state.layoutLoaded = true;
+    if (state.myLayout.length !== (data.links || []).length) {
+      debouncedSaveLayout();   // persist the cleaned-up layout
+    }
     await renderIcons();
   }
 }
@@ -1602,6 +1617,7 @@ desktop.addEventListener('contextmenu', e => {
   if (suppressDesktopCtx) return;
   e.preventDefault();
   ctxTarget = null;
+  ctxPos = { x: e.clientX, y: e.clientY };
   showMenu(e.clientX, e.clientY, false);
 });
 

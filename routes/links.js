@@ -10,10 +10,12 @@ import { findIconUrl } from '../lib/thesvg.js';   // add to imports
 
 export const linksRouter = express.Router();
 
+const LINK_COLS = 'id::int AS id, title, url, icon, mode, category';
+
 linksRouter.post('/', getUser, requireAdmin, async (req, res) => {
   const { title, url, icon, category, mode } = req.body ?? {};
   if (!title || !url) throw new HttpError(400, 'Title and URL are required');
-  const safeUrl  = assertSafeUrl(url);
+  const safeUrl = assertSafeUrl(url);
   const safeMode = mode === 'tab' ? 'tab' : 'window';
 
   // Only auto-detect when the admin left the icon blank
@@ -27,37 +29,25 @@ linksRouter.post('/', getUser, requireAdmin, async (req, res) => {
 });
 
 linksRouter.get('/', async (_req, res) => {
-  const { rows } = await pool.query('SELECT * FROM shared_links ORDER BY category, title');
+  const { rows } = await pool.query(`SELECT ${LINK_COLS} FROM shared_links ORDER BY category, title`);
   res.json(rows);
-});
-
-linksRouter.post('/', getUser, requireAdmin, async (req, res) => {
-  const { title, url, icon, category, mode } = req.body ?? {};
-  if (!title || !url) throw new HttpError(400, 'Title and URL are required');
-  const safeUrl  = assertSafeUrl(url);                       // fix #6
-  const safeMode = mode === 'tab' ? 'tab' : 'window';
-  const { rows } = await pool.query(
-    'INSERT INTO shared_links (title, url, icon, category, mode) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-    [String(title), safeUrl, icon || '', category || 'General', safeMode]
-  );
-  res.json({ id: Number(rows[0].id), ok: true });
 });
 
 linksRouter.put('/:id', getUser, requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid id');
 
-  const found = await pool.query('SELECT * FROM shared_links WHERE id = $1', [id]);
+  const found = await pool.query(`SELECT ${LINK_COLS} FROM shared_links WHERE id = $1`, [id]);
   if (!found.rows.length) throw new HttpError(404, 'Link not found');
   const existing = found.rows[0];
 
-  const body  = req.body || {};
+  const body = req.body || {};
   const next_ = {
-    title:    body.title    ?? existing.title,
-    url:      body.url      ?? existing.url,
-    icon:     body.icon     ?? existing.icon,
+    title: body.title ?? existing.title,
+    url: body.url ?? existing.url,
+    icon: body.icon ?? existing.icon,
     category: body.category ?? existing.category,
-    mode:     body.mode     ?? existing.mode ?? 'tab',
+    mode: body.mode ?? existing.mode ?? 'tab',
   };
   if (next_.mode !== 'tab') next_.mode = 'window';
   if (!next_.title || !next_.url) throw new HttpError(400, 'Title and URL are required');
@@ -79,7 +69,7 @@ linksRouter.delete('/:id', getUser, requireAdmin, async (req, res) => {
 
 linksRouter.post('/reset', getUser, requireAdmin, async (_req, res) => {
   await resetLinks(DEFAULT_LINKS);
-  const { rows } = await pool.query('SELECT * FROM shared_links ORDER BY category, title');
+  const { rows } = await pool.query(`SELECT ${LINK_COLS} FROM shared_links ORDER BY category, title`);
   res.json({ ok: true, links: rows });
 });
 
