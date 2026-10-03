@@ -65,7 +65,7 @@ const debouncedSaveLayout = debounce(() => saveLayoutWithStatus(), 500);
 
 function getNextPosition() {
   const cw = state.iconSize + 42, ch = state.iconSize + 62;   // grid step
-  const w = state.iconSize + 36,  h = state.iconSize + 36;    // approx icon box
+  const w = state.iconSize + 36, h = state.iconSize + 36;    // approx icon box
   const placed = state.myLayout.filter(i => Number.isFinite(i.x) && Number.isFinite(i.y));
   const isFree = (x, y) => placed.every(i => Math.abs(i.x - x) >= w || Math.abs(i.y - y) >= h);
 
@@ -855,22 +855,30 @@ document.addEventListener('keydown', e => {
 });
 
 // ================= Icon collision =================
+const ESCAPE_FORCE = 40;            // px of pointer overshoot needed before a pinned icon slips sideways
+const WALL_SNUG = 4;                // how close to a wall counts as "pinned"
 const ICON_GAP = 5;                 // breathing room between icons
 const DESK_TOP = 28, DESK_BOTTOM = 28;
 
+function pinned(r, axis) {
+  return axis === 'x'
+    ? r.x <= WALL_SNUG || r.x + r.w >= innerWidth - WALL_SNUG
+    : r.y <= DESK_TOP + WALL_SNUG || r.y + r.h >= innerHeight - DESK_BOTTOM - WALL_SNUG;
+}
+
 function rectsOverlap(a, b, gap = 0) {
   return a.x < b.x + b.w + gap && a.x + a.w + gap > b.x &&
-         a.y < b.y + b.h + gap && a.y + a.h + gap > b.y;
+    a.y < b.y + b.h + gap && a.y + a.h + gap > b.y;
 }
 
 function inBounds(r) {
   return r.x >= 0 && r.x + r.w <= innerWidth &&
-         r.y >= DESK_TOP && r.y + r.h <= innerHeight - DESK_BOTTOM;
+    r.y >= DESK_TOP && r.y + r.h <= innerHeight - DESK_BOTTOM;
 }
 
 // Simulate the push on copies of the rects; nothing touches the DOM until it succeeds.
-function settle(pusher, rects, depth = 0) {
-  if (depth > 6) return false;                       // chain too long, give up
+function settle(pusher, rects, depth = 0, drag = null, force = Infinity) {
+  if (depth > 6) return false;
   const p = rects.get(pusher);
   for (const [other, r] of rects) {
     if (other === pusher || !rectsOverlap(p, r, ICON_GAP)) continue;
@@ -879,22 +887,32 @@ function settle(pusher, rects, depth = 0) {
     const dy = (r.y + r.h / 2) - (p.y + p.h / 2);
     const overlapX = (p.w + r.w) / 2 + ICON_GAP - Math.abs(dx);
     const overlapY = (p.h + r.h) / 2 + ICON_GAP - Math.abs(dy);
+    const horizontal = overlapX < overlapY;
 
-    // Shove along whichever axis needs the smaller nudge
-    if (overlapX < overlapY) r.x += (dx < 0 ? -1 : 1) * overlapX;
-    else                     r.y += (dy < 0 ? -1 : 1) * overlapY;
+    // Only the icon under the mouse gets this check. A pinned icon resists
+    // being shoved along the wall until you push hard enough.
+    if (depth === 0 && drag && force < ESCAPE_FORCE) {
+      const dragAxis = Math.abs(drag.x) >= Math.abs(drag.y) ? 'x' : 'y';
+      const shoveAxis = horizontal ? 'x' : 'y';
+      if (shoveAxis !== dragAxis && pinned(r, dragAxis)) return false;
+    }
 
-    if (!inBounds(r)) return false;                  // backed into a wall
-    if (!settle(other, rects, depth + 1)) return false;  // chain reaction
+    if (horizontal) r.x += (dx < 0 ? -1 : 1) * overlapX;
+    else r.y += (dy < 0 ? -1 : 1) * overlapY;
+
+    if (!inBounds(r)) return false;
+    if (!settle(other, rects, depth + 1)) return false;
   }
   return true;
 }
 
-function tryPlace(el, nx, ny, rects) {
+function tryPlace(el, nx, ny, rects, force) {
+  const prev = rects.get(el);
+  const drag = { x: nx - prev.x, y: ny - prev.y };
   const next = new Map([...rects].map(([k, r]) => [k, { ...r }]));
   next.get(el).x = nx;
   next.get(el).y = ny;
-  return settle(el, next) ? next : null;
+  return settle(el, next, 0, drag, force) ? next : null;
 }
 
 // Saves one icon's position into the right place (layout vs. the Files icon)
@@ -941,9 +959,10 @@ function makeDraggable(el, onEnd) {
 
       // Full move first, then slide along one axis if that's blocked
       const cur = rects.get(el);
-      const next = tryPlace(el, nx, ny, rects)
-                || tryPlace(el, nx, cur.y, rects)
-                || tryPlace(el, cur.x, ny, rects);
+      const force = Math.hypot(nx - cur.x, ny - cur.y);
+      const next = tryPlace(el, nx, ny, rects, force)
+        || tryPlace(el, nx, cur.y, rects, force)
+        || tryPlace(el, cur.x, ny, rects, force);
       if (!next) return;
       rects = next;
 
