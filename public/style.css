@@ -280,7 +280,7 @@ html, body {
 #ctxmenu {
   position: fixed;
   display: none;
-  z-index: 100001;
+  z-index: 100100;
   min-width: 220px;
   border-radius: 12px;
   padding: 6px;
@@ -664,6 +664,7 @@ html, body {
   transition: background 0.15s, color 0.15s;
 }
 .start-app-item:hover { background: var(--surface-hover); color: rgba(0,255,200,.9); }
+.start-app-item:hover .start-pin.on { opacity: 1; }
 .start-app-item img { width: 28px; height: 28px; border-radius: 6px; }
 .start-app-item .app-info { flex: 1; }
 .start-app-item .app-name { color: var(--text-main); font-size: 12px; }
@@ -699,6 +700,10 @@ html, body {
   border-color: rgba(255,102,170,.3);
   color: rgba(255,102,170,.8);
 }
+
+.start-pin { background: none; border: 0; cursor: pointer; font-size: 13px; opacity: .2; filter: grayscale(1); transition: opacity .15s; }
+.start-app-item:hover .start-pin { opacity: .6; }
+.start-pin.on { opacity: 1; filter: none; }
 
 /* ============================================================
    NOTIFICATIONS

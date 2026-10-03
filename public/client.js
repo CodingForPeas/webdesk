@@ -64,16 +64,17 @@ function debounce(fn, ms) {
 const debouncedSaveLayout = debounce(() => saveLayoutWithStatus(), 500);
 
 function getNextPosition() {
-  const occupied = new Set();
-  state.myLayout.forEach(item => occupied.add(`${item.x},${item.y}`));
-  const cw = state.iconSize + 42, ch = state.iconSize + 62;   // 90 x 110 at 48px
-  let x = 24, y = 24;
-  while (occupied.has(`${x},${y}`)) {
-    x += cw;
-    if (x > 250 + state.iconSize) { x = 24; y += ch; }
-    if (y > 1000) { x = 24; y = 24; break; }
+  const cw = state.iconSize + 42, ch = state.iconSize + 62;   // grid step
+  const w = state.iconSize + 36,  h = state.iconSize + 36;    // approx icon box
+  const placed = state.myLayout.filter(i => Number.isFinite(i.x) && Number.isFinite(i.y));
+  const isFree = (x, y) => placed.every(i => Math.abs(i.x - x) >= w || Math.abs(i.y - y) >= h);
+
+  for (let y = 24; y <= 1000; y += ch) {
+    for (let x = 24; x <= 250 + state.iconSize; x += cw) {
+      if (isFree(x, y)) return { x, y };
+    }
   }
-  return { x, y };
+  return { x: 24, y: 24 };
 }
 
 async function syncGuestLayoutToServer() {
@@ -142,19 +143,21 @@ function resolveIcon(link) {
 async function setLocalIcon(link, iconUrl) {
   let item = getLayoutItem(link.id);
   if (!item) {
-    const free = getNextPosition();
-    item = { linkId: link.id, x: free.x, y: free.y };
+    if (!iconUrl) return;              // nothing to set or clear
+    item = { linkId: link.id };        // no x/y, so it stays off the desktop
     state.myLayout.push(item);
   }
-  if (iconUrl) {
-    item.icon = iconUrl;
-  } else {
-    delete item.icon;
+  if (iconUrl) item.icon = iconUrl;
+  else delete item.icon;
+
+  // Don't leave empty entries behind
+  if (!item.icon && !isOnDesktop(link.id)) {
+    state.myLayout = state.myLayout.filter(i => i !== item);
   }
+
   const res = await saveLayoutWithStatus();
   await renderIcons();
-  if (!res && item.icon) {
-    delete item.icon;
+  if (!res && iconUrl) {
     notify('error', 'Icon save failed', api._lastError || 'Unknown error');
   }
 }
@@ -744,53 +747,37 @@ function getLinkById(id) {
   return state.sharedLinks.find(l => l.id === id);
 }
 
-async function hideLink(link) {
-  state.myLayout = state.myLayout.filter(i => i.linkId !== link.id);
-  state.hiddenLinks = state.hiddenLinks || [];
-  if (!state.hiddenLinks.includes(link.id)) state.hiddenLinks.push(link.id);
-  const res = await saveLayoutWithStatus();
+function isOnDesktop(linkId) {
+  const it = getLayoutItem(linkId);
+  return !!it && Number.isFinite(it.x) && Number.isFinite(it.y);
+}
+
+async function addToDesktop(link, at) {
+  const pos = at || getNextPosition();
+  let item = getLayoutItem(link.id);
+  if (!item) { item = { linkId: link.id }; state.myLayout.push(item); }
+  item.x = pos.x; item.y = pos.y;
+  await saveLayoutWithStatus();
   await renderIcons();
-  if (!res) {
-    notify('error', 'Save failed', `Could not save layout: ${api._lastError || 'unknown error'}`);
-  }
+}
 
-  // Close any open window for this link
-  const winKey = link.url + '__' + link.id;
-  closeWindow(winKey);
-
-  notify('info', 'Icon removed', `"${link.title}" hidden from your desktop. Use Start Menu to reopen.`);
+async function removeFromDesktop(link) {
+  const item = getLayoutItem(link.id);
+  if (!item || !isOnDesktop(link.id)) return;
+  if (item.icon) { delete item.x; delete item.y; }   // keep personal icon override
+  else state.myLayout = state.myLayout.filter(i => i.linkId !== link.id);
+  await saveLayoutWithStatus();
+  await renderIcons();
+  notify('info', 'Removed from desktop', `"${link.title}" is still in the Start menu.`);
 }
 
 async function renderIcons() {
   desktop.querySelectorAll('.icon:not(.fm-icon)').forEach(el => el.remove());
-
-  const layoutMap = {};
-  state.myLayout.forEach(item => { layoutMap[item.linkId] = item; });
-
-  let layoutChanged = false;
-  const hidden = new Set(state.hiddenLinks || []);
-
   state.sharedLinks.forEach(link => {
-    if (hidden.has(link.id)) return;
-    if (link.hidden) return;
-
-    if (!layoutMap[link.id]) {
-      const free = getNextPosition();
-      const pos = { linkId: link.id, x: free.x, y: free.y };
-      state.myLayout.push(pos);
-      layoutMap[link.id] = pos;
-      layoutChanged = true;
-    }
-    const pos = layoutMap[link.id];
+    if (link.hidden || !isOnDesktop(link.id)) return;
+    const pos = getLayoutItem(link.id);
     desktop.appendChild(buildIcon(link, pos.x, pos.y));
   });
-
-  if (layoutChanged) {
-    const res = await saveLayoutWithStatus();
-    if (!res) {
-      notify('error', 'Layout save failed', api._lastError || 'Unknown error');
-    }
-  }
 }
 
 function buildIcon(link, x, y) {
@@ -859,23 +846,16 @@ document.addEventListener('keydown', e => {
 
   if (e.key === 'Escape') closeStartMenu();
 
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIcon) {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIcon?.link) {
     const link = selectedIcon.link;
     deselect();
-    state.myLayout = state.myLayout.filter(i => i.linkId !== link.id);
-    state.hiddenLinks = state.hiddenLinks || [];
-    if (!state.hiddenLinks.includes(link.id)) state.hiddenLinks.push(link.id);
-    debouncedSaveLayout();
-    renderIcons();
-    closeWindow(link.url + '__' + link.id);
+    removeFromDesktop(link);
   }
 });
 
 function makeDraggable(el, onEnd) {
   const TOP_BAR_HEIGHT = 28;
   const BOTTOM_BAR_HEIGHT = 28;
-  const ICON_W = 84;
-  const ICON_H = 60;
 
   el.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
@@ -989,7 +969,7 @@ function openDockerMonitor() {
 }
 
 // ================= File Manager App =================
-const FILE_MANAGER = { id: 'filemanager', title: 'File Manager', url: 'app://files'};
+const FILE_MANAGER = { id: 'filemanager', title: 'File Manager', url: 'app://files' };
 
 function openFileManager() {
   if (openWins.has(FILE_MANAGER.url)) { restoreWin(FILE_MANAGER.url); return; }
@@ -1200,21 +1180,6 @@ function closeStartMenu() {
   document.querySelectorAll('.flyout-open').forEach(f => f.classList.remove('flyout-open'));
 }
 
-startAppsList.addEventListener('contextmenu', e => {
-  const row = e.target.closest('.start-app-item[data-link-id]');
-  if (!row) return;
-  e.preventDefault();
-  e.stopPropagation();
-  suppressDesktopCtx = true;
-  setTimeout(() => suppressDesktopCtx = false, 0);
-
-  const link = getLinkById(Number(row.dataset.linkId));
-  if (!link) return;
-
-  ctxTarget = link;
-  showMenu(e.clientX, e.clientY, true);
-});
-
 function renderStartApps(filter = '') {
   document.querySelectorAll('.start-folder-body').forEach(el => el.remove());
   startAppsList.innerHTML = '';
@@ -1243,7 +1208,6 @@ function renderStartApps(filter = '') {
 
   state.sharedLinks.forEach(link => {
     if (lowerFilter && !link.title.toLowerCase().includes(lowerFilter)) return;
-    if ((state.hiddenLinks || []).includes(link.id)) return;
     const resolved = resolveIcon(link) || FALLBACK_ICON;
     addItem(link.category || 'Web', {
       type: 'link',
@@ -1251,15 +1215,6 @@ function renderStartApps(filter = '') {
       name: link.title,
       sub: link.url,
       icon: `<img class="start-app-icon" data-src="${escapeHtml(resolved)}" alt="${escapeHtml(link.title)}">`,
-      onclick: async () => {
-        closeStartMenu();
-        if ((state.hiddenLinks || []).includes(link.id)) {
-          state.hiddenLinks = state.hiddenLinks.filter(id => id !== link.id);
-          await saveLayoutWithStatus();
-          await renderIcons();
-        }
-        openWindow(link);
-      }
     });
   });
 
@@ -1291,26 +1246,37 @@ function renderStartApps(filter = '') {
       ${item.sub ? `<div class="app-cat">${escapeHtml(item.sub)}</div>` : ''}
     </div>`;
 
+      if (item.type === 'link') {
+        const pin = document.createElement('button');
+        const sync = () => {
+          const on = isOnDesktop(item.linkId);
+          pin.classList.toggle('on', on);
+          pin.title = on ? 'Remove from desktop' : 'Show on desktop';
+        };
+        pin.className = 'start-pin';
+        pin.textContent = '📌';
+        sync();
+        pin.onclick = async e => {
+          e.stopPropagation();
+          const link = getLinkById(item.linkId);
+          if (!link) return;
+          if (isOnDesktop(link.id)) await removeFromDesktop(link);
+          else await addToDesktop(link);
+          sync();
+        };
+        row.appendChild(pin);
+      }
       const img = row.querySelector('img.start-app-icon');
       if (img) {
         img.src = img.dataset.src;
         img.onerror = function () { this.onerror = null; this.src = FALLBACK_ICON; };
       }
 
-      row.onclick = async () => {
+      row.onclick = () => {
         closeStartMenu();
-        if (item.type !== 'link') {
-          if (item.onclick) item.onclick();
-          return;
-        }
+        if (item.type !== 'link') { item.onclick?.(); return; }
         const link = getLinkById(item.linkId);
-        if (!link) return;
-        if ((state.hiddenLinks || []).includes(link.id)) {
-          state.hiddenLinks = state.hiddenLinks.filter(id => id !== link.id);
-          await saveLayoutWithStatus();
-          await renderIcons();
-        }
-        openWindow(link);
+        if (link) openWindow(link);
       };
 
       row.oncontextmenu = e => {
@@ -1536,7 +1502,6 @@ function openWindow(link) {
 
 // ================= Resize Logic =================
 function makeResizable(win) {
-  const TOP_BAR_HEIGHT = 28;
   const BOTTOM_BAR_HEIGHT = 28;
   const TITLEBAR_H = 34;
   const handles = win.querySelectorAll('.resize-handle');
@@ -1644,6 +1609,7 @@ desktop.addEventListener('contextmenu', e => {
 function showMenu(x, y, onIcon) {
   const admin = userIsAdmin();
   const hasOverride = ctxTarget ? !!getLayoutItem(ctxTarget.id)?.icon : false;
+  const onDesk = ctxTarget ? isOnDesktop(ctxTarget.id) : false;
 
   if (onIcon) {
     ctxmenu.innerHTML = `
@@ -1654,7 +1620,7 @@ function showMenu(x, y, onIcon) {
       <div data-act="open-newtab">🔗 Open in new tab</div>
       <div data-act="open-newwindow">🪟 Open in new window</div>
       <div class="sep"></div>
-      <div data-act="remove">🗑️ Remove icon</div>
+      ${onDesk ? '<div data-act="remove">🗑️ Remove from desktop</div>' : '<div data-act="add-desktop">📌 Add to desktop</div>'}
       <div class="sep"></div>
       ${state.user ? '<div data-act="add">➕ Add link…</div><div class="sep"></div>' : ''}
       <div data-act="reset">♻️ Reset icon positions</div>
@@ -1699,6 +1665,10 @@ ctxmenu.addEventListener('click', async e => {
   if (!act) return;
 
   if (act === 'open' && ctxTarget) openWindow(ctxTarget);
+  if (act === 'edit' && ctxTarget) openEditModal(ctxTarget);
+  if (act === 'remove' && ctxTarget) await removeFromDesktop(ctxTarget);
+  if (act === 'add-desktop' && ctxTarget) await addToDesktop(ctxTarget);
+  if (act === 'add') openModal();
 
   if (act === 'open-newtab' && ctxTarget) {
     const url = safeHttpUrl(ctxTarget.url);
@@ -1710,28 +1680,23 @@ ctxmenu.addEventListener('click', async e => {
     if (url) window.open(url, '_blank', 'width=1280,height=800,noopener,noreferrer');
   }
 
-  if (act === 'edit' && ctxTarget) openEditModal(ctxTarget);
 
   if (act === 'reset-icon' && ctxTarget) {
     await setLocalIcon(ctxTarget, '');
     notify('info', 'Icon reset', `"${ctxTarget.title}" uses the shared icon again.`);
   }
 
-  if (act === 'remove' && ctxTarget) {
-    hideLink(ctxTarget);
-  }
-
-  if (act === 'add') openModal();
-
   if (act === 'reset') {
-    if (!confirm('Reset all icons to default positions?')) return;
-    state.myLayout = [];
+    if (!confirm('Re-arrange desktop icons?')) { hideMenu(); return; }
+    const ids = state.myLayout.filter(i => Number.isFinite(i.x)).map(i => i.linkId);
+    ids.forEach(id => { const it = getLayoutItem(id); delete it.x; delete it.y; });
+    ids.forEach(id => { const p = getNextPosition(); const it = getLayoutItem(id); it.x = p.x; it.y = p.y; });
     debouncedSaveLayout();
     await renderIcons();
   }
 
   if (act === 'reset-links') {
-    if (!confirm('Restore original shared links and reset all icons?')) return;
+    if (!confirm('Restore original shared links and reset all icons?')) { hideMenu(); return; }
     const res = await api('/links/reset', { method: 'POST' });
     if (res && res.links) {
       state.sharedLinks = res.links;
@@ -1740,6 +1705,7 @@ ctxmenu.addEventListener('click', async e => {
     }
     state.myLayout = [];
     state.hiddenLinks = [];
+    state.sharedLinks.forEach(l => { const p = getNextPosition(); state.myLayout.push({ linkId: l.id, x: p.x, y: p.y }); });
     debouncedSaveLayout();
     await renderIcons();
     hideMenu();
@@ -1783,8 +1749,8 @@ document.getElementById('m-add').addEventListener('click', async () => {
     await loadSharedLinks();
     const link = state.sharedLinks.find(l => l.id === newLink.id);
     if (link) {
-      const ICON_W = 84;
-      const ICON_H = 60;
+      const ICON_W = state.iconSize + 36;
+      const ICON_H = state.iconSize + 12;
       const TOP_BAR = 28;
       const BOTTOM_BAR = 28;
 
@@ -1798,10 +1764,7 @@ document.getElementById('m-add').addEventListener('click', async () => {
         posY = free.y;
       }
 
-      const pos = { linkId: link.id, x: posX, y: posY };
-      state.myLayout.push(pos);
-      debouncedSaveLayout();
-      await renderIcons();
+      await addToDesktop(link, { x: posX, y: posY });
     }
     closeModal();
   }
