@@ -29,6 +29,8 @@ services:
       PROXY_IP: ${PROXY_IP:?Set PROXY_IP}
       NODE_ENV: ${NODE_ENV:?Set NODE_ENV}
       DS_HOST: ${DS_HOST:?Set DS_HOST}
+      THESVG_URL: ${THESVG_URL:?Set THESVG_URL}
+      THESVG_REGISTRY: /data/icons.json
       FILES_DIR: /app/data/files
     command:
 #     - --providers.docker.endpoint=tcp://socket-proxy:2375
