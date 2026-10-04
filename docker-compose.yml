@@ -40,6 +40,6 @@ services:
     volumes:
       - ${DIR_PREFIX}/webdesk/data:/app/data
       - ${DIR_PREFIX}/webdesk/files:/app/files
-      - ${DIR_PREFIX}/webdesk/icons:/app/public/icons
+      - /misc/docker_const/dashy/item-icons:/app/public/icons
     restart: unless-stopped
 
