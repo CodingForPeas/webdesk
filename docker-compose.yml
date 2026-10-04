@@ -26,10 +26,12 @@ services:
       - .env
     environment:
       DB_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASS}@${POSTGRES_HOST}:5432/${POSTGRES_DBNAME}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL}
       PROXY_IP: ${PROXY_IP:?Set PROXY_IP}
       NODE_ENV: ${NODE_ENV:?Set NODE_ENV}
       DS_HOST: ${DS_HOST:?Set DS_HOST}
       THESVG_URL: ${THESVG_URL:?Set THESVG_URL}
+      LINK_ALLOWED_HOSTS: ${LINK_ALLOWED_HOSTS:?Set LINK_ALLOWED_HOSTS}
       THESVG_REGISTRY: /data/icons.json
       FILES_DIR: /app/data/files
     command:
