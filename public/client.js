@@ -895,24 +895,28 @@ function settle(pusher, rects, depth, ctx) {
     let pushDist = horizontal ? overlapX : overlapY;
 
     if (depth === 0) {
+      // Overshoot measured only along the shove axis, and only toward the other icon
+      const axis = horizontal ? 'x' : 'y';
+      const dir = (horizontal ? dx : dy) < 0 ? -1 : 1;
+      const along = (a, b) => Math.max(0, (a[axis] - b[axis]) * dir);
+      const force = along(ctx.want, ctx.start);
+
       // Friction: only applies to icons we haven't started pushing yet
       if (!ctx.engaged.has(other)) {
         if (!ctx.contacts.has(other)) ctx.contacts.set(other, { ...ctx.want });
-        const s = ctx.contacts.get(other);
-        if (Math.hypot(ctx.want.x - s.x, ctx.want.y - s.y) < INITIAL_FRICTION) return false;
+        if (along(ctx.want, ctx.contacts.get(other)) < INITIAL_FRICTION) return false;
       }
 
-      // Wall resistance: also only once per contact
+      // Wall resistance: also only once per contact (unchanged)
       const dragAxis = Math.abs(ctx.drag.x) >= Math.abs(ctx.drag.y) ? 'x' : 'y';
-      const shoveAxis = horizontal ? 'x' : 'y';
-      if (shoveAxis !== dragAxis && pinned(r, dragAxis)) {
+      if (axis !== dragAxis && pinned(r, dragAxis)) {
         if (!ctx.escaped.has(other) && ctx.force < ESCAPE_FORCE) return false;
         ctx.escHits.add(other);
       }
       ctx.hits.add(other);
 
       // Harder shove = further push (never less than the overlap)
-      const mult = Math.min(MAX_FORCE_MULTIPLIER, Math.max(1, 1 + (ctx.force - INITIAL_FRICTION) / 100));
+      const mult = Math.min(MAX_FORCE_MULTIPLIER, Math.max(1, 1 + (force - INITIAL_FRICTION) / 100));
       pushDist *= mult;
     }
 
@@ -929,6 +933,7 @@ function tryPlace(el, nx, ny, rects, force, engaged, escaped, contacts, want) {
   const prev = rects.get(el);
   const ctx = {
     drag: { x: nx - prev.x, y: ny - prev.y },
+    start: { x: prev.x, y: prev.y },
     force, engaged, escaped, contacts, want,
     hits: new Set(), escHits: new Set()
   };
