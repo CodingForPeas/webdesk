@@ -855,10 +855,12 @@ document.addEventListener('keydown', e => {
 });
 
 // ================= Icon collision =================
-const INITIAL_FRICTION = 12;         // px to drag past overlap before pushing starts
-const MAX_FORCE_MULTIPLIER = 2;     // max multiplier for push distance
+const INITIAL_FRICTION = 15;        // px of pointer overshoot before a new contact starts moving
+const MAX_FORCE_MULTIPLIER = 6;     // max multiplier for push distance
 const WALL_SNUG = 4;                // how close to a wall counts as "pinned"
 const ICON_GAP = 5;                 // breathing room between icons
+const ESCAPE_FORCE = 40;            // wall resistance, folded back in
+const RELEASE_SLACK = 10;           // how far apart icons must get before resistance resets
 const DESK_TOP = 28, DESK_BOTTOM = 28;
 
 function pinned(r, axis) {
@@ -878,7 +880,7 @@ function inBounds(r) {
 }
 
 // Simulate the push on copies of the rects; nothing touches the DOM until it succeeds.
-function settle(pusher, rects, depth = 0, drag = null, force = Infinity, friction = 0) {
+function settle(pusher, rects, depth, ctx) {
   if (depth > 6) return false;
   const p = rects.get(pusher);
   for (const [other, r] of rects) {
@@ -890,32 +892,50 @@ function settle(pusher, rects, depth = 0, drag = null, force = Infinity, frictio
     const overlapY = (p.h + r.h) / 2 + ICON_GAP - Math.abs(dy);
     const horizontal = overlapX < overlapY;
 
-    // Initial friction: don't push until dragged past the overlap
-    if (depth === 0 && drag && friction < INITIAL_FRICTION) return false;
-
-    // Force multiplier: scale push distance by how hard you’re shoving
     let pushDist = horizontal ? overlapX : overlapY;
-    if (force > 0) {
-      const mult = Math.min(MAX_FORCE_MULTIPLIER, 1 + (force - INITIAL_FRICTION) / 100);
+
+    if (depth === 0) {
+      // Friction: only applies to icons we haven't started pushing yet
+      if (!ctx.engaged.has(other)) {
+        if (!ctx.contacts.has(other)) ctx.contacts.set(other, { ...ctx.want });
+        const s = ctx.contacts.get(other);
+        if (Math.hypot(ctx.want.x - s.x, ctx.want.y - s.y) < INITIAL_FRICTION) return false;
+      }
+
+      // Wall resistance: also only once per contact
+      const dragAxis = Math.abs(ctx.drag.x) >= Math.abs(ctx.drag.y) ? 'x' : 'y';
+      const shoveAxis = horizontal ? 'x' : 'y';
+      if (shoveAxis !== dragAxis && pinned(r, dragAxis)) {
+        if (!ctx.escaped.has(other) && ctx.force < ESCAPE_FORCE) return false;
+        ctx.escHits.add(other);
+      }
+      ctx.hits.add(other);
+
+      // Harder shove = further push (never less than the overlap)
+      const mult = Math.min(MAX_FORCE_MULTIPLIER, Math.max(1, 1 + (ctx.force - INITIAL_FRICTION) / 100));
       pushDist *= mult;
     }
 
     if (horizontal) r.x += (dx < 0 ? -1 : 1) * pushDist;
-    else            r.y += (dy < 0 ? -1 : 1) * pushDist;
+    else r.y += (dy < 0 ? -1 : 1) * pushDist;
 
     if (!inBounds(r)) return false;
-    if (!settle(other, rects, depth + 1, drag, force, friction)) return false;
+    if (!settle(other, rects, depth + 1, ctx)) return false;
   }
   return true;
 }
 
-function tryPlace(el, nx, ny, rects, force, friction) {
+function tryPlace(el, nx, ny, rects, force, engaged, escaped, contacts, want) {
   const prev = rects.get(el);
-  const drag = { x: nx - prev.x, y: ny - prev.y };
+  const ctx = {
+    drag: { x: nx - prev.x, y: ny - prev.y },
+    force, engaged, escaped, contacts, want,
+    hits: new Set(), escHits: new Set()
+  };
   const next = new Map([...rects].map(([k, r]) => [k, { ...r }]));
   next.get(el).x = nx;
   next.get(el).y = ny;
-  return settle(el, next, 0, drag, force, friction) ? next : null;
+  return settle(el, next, 0, ctx) ? { rects: next, ctx } : null;
 }
 
 // Saves one icon's position into the right place (layout vs. the Files icon)
@@ -944,11 +964,13 @@ function makeDraggable(el, onEnd) {
     let moved = false;
     el.setPointerCapture(e.pointerId);
 
-    // Snapshot every icon (including the Files icon) at drag start
-    let rects = new Map();
-    desktop.querySelectorAll('.icon').forEach(i =>
-      rects.set(i, { x: i.offsetLeft, y: i.offsetTop, w: i.offsetWidth, h: i.offsetHeight }));
-    const touched = new Set();   // icons that got pushed and need saving
+    let rects = new Map();        // Snapshot every icon (including the Files icon) at drag start
+    const engaged = new Set();    // icons whose friction we've already overcome
+    const escaped = new Set();    // icons whose wall resistance we've already overcome
+    const contacts = new Map();   // icon -> where the pointer was at first contact
+    const touched = new Set();    // icons that got pushed and need saving
+
+    desktop.querySelectorAll('.icon').forEach(i => rects.set(i, { x: i.offsetLeft, y: i.offsetTop, w: i.offsetWidth, h: i.offsetHeight }));
 
     function mv(ev) {
       const dx = ev.clientX - sx, dy = ev.clientY - sy;
@@ -962,15 +984,33 @@ function makeDraggable(el, onEnd) {
 
       // Full move first, then slide along one axis if that's blocked
       const cur = rects.get(el);
-      const dragDist = Math.hypot(nx - cur.x, ny - cur.y);
-      const friction = Math.max(0, dragDist - (ICON_GAP + 1));  // start counting after overlap + 1px
-      const force = Math.max(0, dragDist - INITIAL_FRICTION);
+      const force = Math.hypot(nx - cur.x, ny - cur.y);
 
-      const next = tryPlace(el, nx, ny, rects, force, friction)
-        || tryPlace(el, nx, cur.y, rects, force, friction)
-        || tryPlace(el, cur.x, ny, rects, force, friction);
-      if (!next) return;
-      rects = next;
+      const want = { x: nx, y: ny };
+
+      // Forget first-contact points for icons the pointer has moved clear of
+      const wantRect = { ...rects.get(el), x: nx, y: ny };
+      for (const o of [...contacts.keys()]) {
+        if (!rectsOverlap(wantRect, rects.get(o), ICON_GAP + RELEASE_SLACK)) contacts.delete(o);
+      }
+
+      const res = tryPlace(el, nx, ny, rects, force, engaged, escaped, contacts, want)
+        || tryPlace(el, nx, cur.y, rects, force, engaged, escaped, contacts, want)
+        || tryPlace(el, cur.x, ny, rects, force, engaged, escaped, contacts, want);
+
+      if (!res) return;
+      rects = res.rects;
+
+      // Remember what we're pushing; forget icons we've moved clear of
+      res.ctx.hits.forEach(o => engaged.add(o));
+      res.ctx.escHits.forEach(o => escaped.add(o));
+      const me = rects.get(el);
+      for (const o of [...engaged]) {
+        if (!rectsOverlap(me, rects.get(o), ICON_GAP + RELEASE_SLACK)) {
+          engaged.delete(o);
+          escaped.delete(o);
+        }
+      }
 
       rects.forEach((r, i) => {
         if (parseFloat(i.style.left) === r.x && parseFloat(i.style.top) === r.y) return;
