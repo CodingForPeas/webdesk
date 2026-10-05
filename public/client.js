@@ -275,13 +275,13 @@ async function loadUser() {
       updateWelcomeText();
       addFileManagerIcon();
       document.getElementById('user-name').textContent = user.name || user.email;
-      document.getElementById('btn-login').style.display = 'none';
-      document.getElementById('btn-logout').style.display = '';
+      document.getElementById('btn-login').hidden = true;
+      document.getElementById('btn-logout').hidden = false;
     } else {
       state.user = null;
       document.getElementById('user-name').textContent = 'Guest';
-      document.getElementById('btn-login').style.display = '';
-      document.getElementById('btn-logout').style.display = '';
+      document.getElementById('btn-login').hidden = false;
+      document.getElementById('btn-logout').hidden = true;
       await loadLayoutForGuest();
     }
   } catch (e) {
@@ -1151,7 +1151,7 @@ function openFileManager() {
       <div class="fm-toolbar">
         <button id="fm-refresh">${uiIcon('refresh')} Refresh</button>
         <button id="fm-newfile">${uiIcon('plus')} New text file</button>
-        <input type="file" id="fm-upload-input" style="display:none">
+        <input type="file" id="fm-upload-input" hidden>
         <button id="fm-upload">${uiIcon('upload')} Upload</button>
       </div>
       <div class="fm-upload-area" id="fm-dropzone">Drop files here to upload</div>
@@ -1611,8 +1611,8 @@ function openWindow(link) {
       <button data-act="min" title="Minimize">–</button>
       <button data-act="close" title="Close">✕</button>
     </div>
-    <div style="position:relative; flex:1; overflow:hidden;">
-      <iframe src="${escapeHtml(link.url)}" sandbox="allow-scripts allow-forms" style="position:absolute; inset:0; width:100%; height:100%; border:0;"></iframe>
+    <div class="window-frame">
+      <iframe src="${escapeHtml(link.url)}" sandbox="allow-scripts allow-forms"></iframe>
     </div>
     <div class="resize-handle resize-n"></div>
     <div class="resize-handle resize-s"></div>
@@ -1785,13 +1785,13 @@ function showMenu(x, y, onIcon) {
       <div class="sep"></div>
       ${state.user ? `<div data-act="add">${uiIcon('plus', 'ctx-icon')}<span class="ctx-label">Add link…</span></div><div class="sep"></div>` : ''}
       <div data-act="reset">${uiIcon('reset', 'ctx-icon')}<span class="ctx-label">Reset icon positions</span></div>
-      ${admin ? `<div data-act="reset-links" style="color:#ef4444">${uiIcon('refresh', 'ctx-icon')}<span class="ctx-label">Reset links to defaults</span></div>` : ''}
+      ${admin ? `<div class="ctx-danger" data-act="reset-links">${uiIcon('refresh', 'ctx-icon')}<span class="ctx-label">Reset links to defaults</span></div>` : ''}
     `;
   } else {
     ctxmenu.innerHTML = `
       ${state.user ? `<div data-act="add">${uiIcon('plus', 'ctx-icon')}<span class="ctx-label">Add link…</span></div><div class="sep"></div>` : ''}
       <div data-act="reset">${uiIcon('reset', 'ctx-icon')}<span class="ctx-label">Reset layout</span></div>
-      ${admin ? `<div data-act="reset-links" style="color:#ef4444">${uiIcon('refresh', 'ctx-icon')}<span class="ctx-label">Reset links to defaults</span></div>` : ''}
+      ${admin ? `<div class="ctx-danger" data-act="reset-links">${uiIcon('refresh', 'ctx-icon')}<span class="ctx-label">Reset links to defaults</span></div>` : ''}
     `;
   }
 

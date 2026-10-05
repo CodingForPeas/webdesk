@@ -1,5 +1,4 @@
 
-@import url('https://fonts.googleapis.com/css2?family=Raleway:wght@200;300;400;600&display=swap');
 
 * {
   margin: 0;
@@ -158,6 +157,8 @@ html, body {
   border-color: rgba(0,255,200,.4);
 }
 .window iframe { flex: 1; border: 0; width: 100%; }
+.window-frame { position: relative; flex: 1; overflow: hidden; }
+.window-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 
 /* ============================================================
    TASKBAR & USER BAR — shared aurora chrome
@@ -170,6 +171,9 @@ html, body {
   border-color: var(--border-subtle);
   color: var(--text-main);
 }
+#taskbar-items { display: flex; gap: 6px; flex: 1; }
+#user-bar [hidden],
+.fm-toolbar [hidden] { display: none !important; }
 
 #taskbar {
   position: fixed;
@@ -334,6 +338,7 @@ html, body {
   transition: background 0.12s;
 }
 #ctxmenu div:hover { background: rgba(0,255,200,.08); color: rgba(0,255,200,.9); }
+#ctxmenu .ctx-danger { color: #ef4444; }
 #ctxmenu .sep {
   height: 1px;
   background: var(--border-subtle);
