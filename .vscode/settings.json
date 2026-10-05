@@ -3,5 +3,12 @@
   "docker.lsp.telemetry": "off",
   "telemetry.editStats.enabled": false,
   "idf.telemetry": false,
-  "telemetry.feedback.enabled": false
+  "telemetry.feedback.enabled": false,
+  "editor.fontSize": 11,
+  "chat.editor.fontSize": 10,
+  "chat.fontSize": 11,
+  "debug.console.fontSize": 10,
+  "scm.inputFontSize": 10,
+  "terminal.integrated.fontSize": 10,
+  "markdown.preview.fontSize": 10
 }

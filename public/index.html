@@ -37,11 +37,11 @@
 
 <!-- User Bar -->
 <div id="user-bar">
-  <span>👤 <span id="user-name">Guest</span></span>
+  <span><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="/icons/ui.svg#user"></use></svg> <span id="user-name">Guest</span></span>
   <button id="btn-login">Login</button>
   <button id="btn-logout" style="display:none">Logout</button>
-  <button id="btn-wallpaper">🖼️ Wallpaper</button>
-  <button id="btn-theme" title="Toggle theme">🌙</button>
+  <button id="btn-wallpaper"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="/icons/ui.svg#image"></use></svg> Wallpaper</button>
+  <button id="btn-theme" title="Toggle theme" aria-label="Toggle theme"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="/icons/ui.svg#moon"></use></svg></button>
   <span class="spacer"></span>
   <span id="sync-status">Connecting...</span>
 </div>
@@ -51,10 +51,10 @@
 
 <!-- Taskbar -->
 <div id="taskbar">
-  <button id="btn-start">☰ Start</button>
+  <button id="btn-start"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="/icons/ui.svg#menu"></use></svg> Start</button>
   <div id="taskbar-items" style="display:flex;gap:6px;flex:1;"></div>
   <span id="clock"></span>
-  <button id="btn-notifications" title="Notifications">🔔<span class="notif-badge" id="notif-badge">0</span></button>
+  <button id="btn-notifications" title="Notifications"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="/icons/ui.svg#bell"></use></svg><span class="notif-badge" id="notif-badge">0</span></button>
 </div>
 
 <!-- Start Menu -->
@@ -68,8 +68,8 @@
   </div>
   <div class="start-apps" id="start-apps-list"></div>
   <div class="start-footer">
-    <button id="btn-start-wallpaper">🖼️ Wallpaper</button>
-    <button id="btn-start-logout" class="danger">🚪 Logout</button>
+    <button id="btn-start-wallpaper"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="/icons/ui.svg#image"></use></svg> Wallpaper</button>
+    <button id="btn-start-logout" class="danger"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="/icons/ui.svg#logout"></use></svg> Logout</button>
   </div>
 </div>
 

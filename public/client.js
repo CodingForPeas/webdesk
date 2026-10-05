@@ -37,7 +37,7 @@ const modalBg = document.getElementById('modal-bg');
 const wallpaperModal = document.getElementById('wallpaper-modal');
 const wallpaperEl = document.getElementById('wallpaper');
 const syncStatus = document.getElementById('sync-status');
-const FALLBACK_ICON = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🔗</text></svg>";
+const FALLBACK_ICON = '/icons/link.svg';
 
 // ================= Helpers =================
 function userIsAdmin() {
@@ -47,6 +47,10 @@ function userIsAdmin() {
 function escapeHtml(s) {
   const d = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   return String(s).replace(/[&<>"']/g, c => d[c]);
+}
+
+function uiIcon(name, className = '') {
+  return `<svg class="ui-icon ${className}" aria-hidden="true" focusable="false"><use href="/icons/ui.svg#${name}"></use></svg>`;
 }
 
 function setStatus(msg, isError) {
@@ -346,7 +350,11 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   localStorage.setItem('desktop_theme', theme);
   const btn = document.getElementById('btn-theme');
-  if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+  if (btn) {
+    btn.querySelector('use').setAttribute('href', `/icons/ui.svg#${theme === 'dark' ? 'sun' : 'moon'}`);
+    btn.setAttribute('aria-label', `Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`);
+    btn.title = `Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`;
+  }
 }
 
 document.getElementById('btn-theme').addEventListener('click', () => {
@@ -1062,7 +1070,7 @@ function openDockerMonitor() {
 
   win.innerHTML = `
     <div class="titlebar">
-      <span class="title">🐳 Docker</span>
+      <span class="title">${uiIcon('docker')} Docker</span>
       <button data-act="min" title="Minimize">–</button>
       <button data-act="close" title="Close">✕</button>
     </div>
@@ -1135,16 +1143,16 @@ function openFileManager() {
   win.style.zIndex = ++zTop;
   win.innerHTML = `
     <div class="titlebar">
-      <span class="title">📁 File Manager</span>
+      <span class="title">${uiIcon('folder')} File Manager</span>
       <button data-act="min" title="Minimize">–</button>
       <button data-act="close" title="Close">✕</button>
     </div>
     <div class="file-manager">
       <div class="fm-toolbar">
-        <button id="fm-refresh">↻ Refresh</button>
-        <button id="fm-newfile">＋ New text file</button>
+        <button id="fm-refresh">${uiIcon('refresh')} Refresh</button>
+        <button id="fm-newfile">${uiIcon('plus')} New text file</button>
         <input type="file" id="fm-upload-input" style="display:none">
-        <button id="fm-upload">⬆ Upload</button>
+        <button id="fm-upload">${uiIcon('upload')} Upload</button>
       </div>
       <div class="fm-upload-area" id="fm-dropzone">Drop files here to upload</div>
       <div class="fm-list" id="fm-list"></div>
@@ -1189,7 +1197,7 @@ function openFileManager() {
       const row = document.createElement('div');
       row.className = 'fm-item';
       const kb = f.size > 1024 ? (f.size / 1024).toFixed(1) + ' KB' : f.size + ' B';
-      row.innerHTML = `<span class="fm-icon">📄</span><span class="fm-name">${escapeHtml(f.name)}</span>
+      row.innerHTML = `${uiIcon('file', 'fm-icon')}<span class="fm-name">${escapeHtml(f.name)}</span>
         <span class="fm-size">${kb}</span><span class="fm-date">${new Date(f.modified).toLocaleDateString()}</span>
         <span class="fm-actions"><button data-a="dl">Download</button><button data-a="del">Delete</button></span>`;
       row.querySelector('[data-a="dl"]').onclick = () => {
@@ -1318,9 +1326,9 @@ const startAppsList = document.getElementById('start-apps-list');
 const startSearchInput = document.getElementById('start-search-input');
 
 const BUILT_IN_APPS = [
-  { id: 'filemanager', name: 'File Manager', cat: 'System', icon: '📁' },
-  { id: 'docker', name: 'Docker Monitor', cat: 'System', icon: '🐳' },
-  { id: 'wallpaper', name: 'Change Wallpaper', cat: 'Settings', icon: '🖼️' },
+  { id: 'filemanager', name: 'File Manager', cat: 'System', icon: 'folder' },
+  { id: 'docker', name: 'Docker Monitor', cat: 'System', icon: 'docker' },
+  { id: 'wallpaper', name: 'Change Wallpaper', cat: 'Settings', icon: 'image' },
 ];
 
 function toggleStartMenu() {
@@ -1349,7 +1357,7 @@ function renderStartApps(filter = '') {
     addItem(app.cat, {
       type: 'app',
       name: app.name,
-      icon: `<span style="font-size:24px;">${app.icon}</span>`,
+      icon: uiIcon(app.icon, 'app-icon'),
       onclick: () => {
         closeStartMenu();
         if (app.id === 'filemanager') openFileManager();
@@ -1379,7 +1387,7 @@ function renderStartApps(filter = '') {
     const header = document.createElement('div');
     header.className = 'start-folder-header';
     header.innerHTML = `
-    <span class="folder-icon">📂</span>
+    ${uiIcon('folder-open', 'folder-icon')}
     <span class="folder-name">${escapeHtml(cat)}</span>
     <span class="folder-count">${items.length}</span>
     <span class="folder-caret">▶</span>
@@ -1407,7 +1415,7 @@ function renderStartApps(filter = '') {
           pin.title = on ? 'Remove from desktop' : 'Show on desktop';
         };
         pin.className = 'start-pin';
-        pin.textContent = '📌';
+        pin.innerHTML = uiIcon('pin', 'pin-icon');
         sync();
         pin.onclick = async e => {
           e.stopPropagation();
@@ -1530,7 +1538,7 @@ function addFileManagerIcon() {
   const fmPos = state.fmIconPos || { x: 24, y: 740 };
   el.style.left = fmPos.x + 'px';
   el.style.top = fmPos.y + 'px';
-  el.innerHTML = `<span style="display:block;line-height:1;">📁</span><span>Files</span>`;
+  el.innerHTML = `${uiIcon('folder')}<span>Files</span>`;
 
   makeDraggable(el, () => {
     state.fmIconPos = {
@@ -1766,24 +1774,24 @@ function showMenu(x, y, onIcon) {
 
   if (onIcon) {
     ctxmenu.innerHTML = `
-      <div data-act="open">📂 Open</div>
-      ${admin ? '<div data-act="edit">✏️ Edit…</div>' : ''}
-      ${hasOverride ? '<div data-act="reset-icon">🖼️ Reset my icon</div>' : ''}
+      <div data-act="open">${uiIcon('folder-open', 'ctx-icon')}<span class="ctx-label">Open</span></div>
+      ${admin ? `<div data-act="edit">${uiIcon('edit', 'ctx-icon')}<span class="ctx-label">Edit…</span></div>` : ''}
+      ${hasOverride ? `<div data-act="reset-icon">${uiIcon('image', 'ctx-icon')}<span class="ctx-label">Reset my icon</span></div>` : ''}
       <div class="sep"></div>
-      <div data-act="open-newtab">🔗 Open in new tab</div>
-      <div data-act="open-newwindow">🪟 Open in new window</div>
+      <div data-act="open-newtab">${uiIcon('link', 'ctx-icon')}<span class="ctx-label">Open in new tab</span></div>
+      <div data-act="open-newwindow">${uiIcon('window', 'ctx-icon')}<span class="ctx-label">Open in new window</span></div>
       <div class="sep"></div>
-      ${onDesk ? '<div data-act="remove">🗑️ Remove from desktop</div>' : '<div data-act="add-desktop">📌 Add to desktop</div>'}
+      ${onDesk ? `<div data-act="remove">${uiIcon('trash', 'ctx-icon')}<span class="ctx-label">Remove from desktop</span></div>` : `<div data-act="add-desktop">${uiIcon('pin', 'ctx-icon')}<span class="ctx-label">Add to desktop</span></div>`}
       <div class="sep"></div>
-      ${state.user ? '<div data-act="add">➕ Add link…</div><div class="sep"></div>' : ''}
-      <div data-act="reset">♻️ Reset icon positions</div>
-      ${admin ? '<div data-act="reset-links" style="color:#ef4444">🔄 Reset links to defaults</div>' : ''}
+      ${state.user ? `<div data-act="add">${uiIcon('plus', 'ctx-icon')}<span class="ctx-label">Add link…</span></div><div class="sep"></div>` : ''}
+      <div data-act="reset">${uiIcon('reset', 'ctx-icon')}<span class="ctx-label">Reset icon positions</span></div>
+      ${admin ? `<div data-act="reset-links" style="color:#ef4444">${uiIcon('refresh', 'ctx-icon')}<span class="ctx-label">Reset links to defaults</span></div>` : ''}
     `;
   } else {
     ctxmenu.innerHTML = `
-      ${state.user ? '<div data-act="add">➕ Add link…</div><div class="sep"></div>' : ''}
-      <div data-act="reset">♻️ Reset layout</div>
-      ${admin ? '<div data-act="reset-links" style="color:#ef4444">🔄 Reset links to defaults</div>' : ''}
+      ${state.user ? `<div data-act="add">${uiIcon('plus', 'ctx-icon')}<span class="ctx-label">Add link…</span></div><div class="sep"></div>` : ''}
+      <div data-act="reset">${uiIcon('reset', 'ctx-icon')}<span class="ctx-label">Reset layout</span></div>
+      ${admin ? `<div data-act="reset-links" style="color:#ef4444">${uiIcon('refresh', 'ctx-icon')}<span class="ctx-label">Reset links to defaults</span></div>` : ''}
     `;
   }
 

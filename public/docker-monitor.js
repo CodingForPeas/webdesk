@@ -38,7 +38,14 @@ export function createDockerPanel({ api, intervalMs = 5000, isActive = () => tru
   const root = el('div', 'dkr-panel');
 
   const toolbar = el('div', 'dkr-toolbar');
-  const refreshBtn = el('button', null, '↻ Refresh');
+  const refreshBtn = el('button');
+  const refreshIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  refreshIcon.classList.add('ui-icon');
+  refreshIcon.setAttribute('aria-hidden', 'true');
+  const refreshUse = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  refreshUse.setAttribute('href', '/icons/ui.svg#refresh');
+  refreshIcon.appendChild(refreshUse);
+  refreshBtn.append(refreshIcon, document.createTextNode(' Refresh'));
   const updated = el('span', 'dkr-updated', 'Loading…');
   toolbar.append(refreshBtn, updated);
 
