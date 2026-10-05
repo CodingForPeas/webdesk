@@ -52,7 +52,7 @@ wallpaperRouter.post('/', getUser, async (req, res) => {
 wallpaperRouter.post('/upload', getUser, wpUploadLimiter, upload.single('file'), async (req, res) => {
   if (!req.file?.buffer?.length) throw new HttpError(400, 'No file data.');
 
-  const sniffed = await FileType.fromBuffer(req.file.buffer);
+  const sniffed = await FileType.fileTypeFromBuffer(req.file.buffer);
   if (!sniffed || !new Set(['jpeg', 'png', 'webp', 'avif']).has(sniffed.ext)) {
     throw new HttpError(415, 'Only JPEG, PNG, WebP, or AVIF images allowed.');
   }
