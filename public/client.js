@@ -1818,8 +1818,9 @@ function showMenu(x, y, onIcon) {
 function hideMenu() { ctxmenu.style.display = 'none'; }
 
 ctxmenu.addEventListener('click', async e => {
-  const act = e.target.dataset.act;
-  if (!act) return;
+  const item = e.target.closest('[data-act]');
+  if (!item || !ctxmenu.contains(item)) return;
+  const act = item.dataset.act;
 
   if (act === 'open' && ctxTarget) openWindow(ctxTarget);
   if (act === 'edit' && ctxTarget) openEditModal(ctxTarget);
