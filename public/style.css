@@ -67,6 +67,14 @@ html, body {
     drop-shadow(0 0 4px rgba(0,255,200,.9))
     drop-shadow(0 0 8px rgba(0,170,255,.6));
 }
+.icon img:not(selected) {
+    /* box-shadow: 0px 0px 30px rgba(0, 255, 255, 0.5); */
+    background: rgba(100, 245, 245, 0.7);
+    padding: 1px;
+    border-radius: 6px;
+    border: 2px solid black;
+    /* color: white; */
+}
 
 .icon.dragging { opacity: .7; transform: scale(1.05); }
 .icon img {
