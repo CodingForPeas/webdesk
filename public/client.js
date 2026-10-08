@@ -71,8 +71,8 @@ function debounce(fn, ms) {
 const debouncedSaveLayout = debounce(() => saveLayoutWithStatus(), 500);
 
 function getNextPosition() {
-  const cw = state.iconSize + 42, ch = state.iconSize + 62;   // grid step
-  const w = state.iconSize + 36, h = state.iconSize + 36;    // approx icon box
+  const w = state.iconSize + 16, h = state.iconSize + 25;    // approx icon box
+  const cw = w + 6, ch = h + 6;                              // grid step
   const placed = state.myLayout.filter(i => Number.isFinite(i.x) && Number.isFinite(i.y));
   const isFree = (x, y) => placed.every(i => Math.abs(i.x - x) >= w || Math.abs(i.y - y) >= h);
 
@@ -867,9 +867,8 @@ document.addEventListener('keydown', e => {
 
 // ================= Icon collision =================
 const INITIAL_FRICTION = 15;        // px of pointer overshoot before a new contact starts moving
-const MAX_FORCE_MULTIPLIER = 6;     // max multiplier for push distance
 const WALL_SNUG = 4;                // how close to a wall counts as "pinned"
-const ICON_GAP = 5;                 // breathing room between icons
+const ICON_GAP = 0;                 // icons meet edge-to-edge when pushed together
 const ESCAPE_FORCE = 40;            // wall resistance, folded back in
 const RELEASE_SLACK = 10;           // how far apart icons must get before resistance resets
 const DESK_TOP = 28, DESK_BOTTOM = 28;
@@ -910,7 +909,6 @@ function settle(pusher, rects, depth, ctx) {
       const axis = horizontal ? 'x' : 'y';
       const dir = (horizontal ? dx : dy) < 0 ? -1 : 1;
       const along = (a, b) => Math.max(0, (a[axis] - b[axis]) * dir);
-      const force = along(ctx.want, ctx.start);
 
       // Friction: only applies to icons we haven't started pushing yet
       if (!ctx.engaged.has(other)) {
@@ -925,10 +923,6 @@ function settle(pusher, rects, depth, ctx) {
         ctx.escHits.add(other);
       }
       ctx.hits.add(other);
-
-      // Harder shove = further push (never less than the overlap)
-      const mult = Math.min(MAX_FORCE_MULTIPLIER, Math.max(1, 1 + (force - INITIAL_FRICTION) / 100));
-      pushDist *= mult;
     }
 
     if (horizontal) r.x += (dx < 0 ? -1 : 1) * pushDist;
@@ -944,7 +938,6 @@ function tryPlace(el, nx, ny, rects, force, engaged, escaped, contacts, want) {
   const prev = rects.get(el);
   const ctx = {
     drag: { x: nx - prev.x, y: ny - prev.y },
-    start: { x: prev.x, y: prev.y },
     force, engaged, escaped, contacts, want,
     hits: new Set(), escHits: new Set()
   };
@@ -1913,8 +1906,8 @@ document.getElementById('m-add').addEventListener('click', async () => {
     await loadSharedLinks();
     const link = state.sharedLinks.find(l => l.id === newLink.id);
     if (link) {
-      const ICON_W = state.iconSize + 36;
-      const ICON_H = state.iconSize + 12;
+      const ICON_W = state.iconSize + 16;
+      const ICON_H = state.iconSize + 25;
       const TOP_BAR = 28;
       const BOTTOM_BAR = 28;
 
