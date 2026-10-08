@@ -2,6 +2,7 @@
 
 import { THEMES } from '/wallpapers.mjs';
 import { createDockerPanel } from '/docker-monitor.js';
+import { createSysMon } from '/sysmon.js';
 
 // ================= Config =================
 const API = '/api';
@@ -38,6 +39,8 @@ const wallpaperModal = document.getElementById('wallpaper-modal');
 const wallpaperEl = document.getElementById('wallpaper');
 const syncStatus = document.getElementById('sync-status');
 const FALLBACK_ICON = '/icons/link.svg';
+const sysmon = createSysMon({ api });
+
 
 // ================= Helpers =================
 function userIsAdmin() {
@@ -2053,6 +2056,7 @@ async function init() {
   try {
     await loadSharedLinks();
     await loadUser();
+    if (userIsAdmin()) sysmon.start();
     loadWallpaper();
     if (state.user) {
       await loadLayout();

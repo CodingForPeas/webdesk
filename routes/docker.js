@@ -118,6 +118,66 @@ async function buildSummary() {
   };
 }
 
+// Shared by the Docker window and the system widget.
+// maxAgeMs lets callers that poll often accept slightly older data.
+export function getDockerSummary(maxAgeMs = CACHE_MS) {
+  if (cache.data && Date.now() - cache.at < maxAgeMs) return Promise.resolve(cache.data);
+  cache.pending ??= buildSummary()
+    .then(d => { cache.data = d; cache.at = Date.now(); return d; })
+    .finally(() => { cache.pending = null; });
+  return cache.pending;
+}
+
+dockerRouter.get('/summary', getUser, requireAdmin, async (_req, res) => {
+  try {
+    res.json(await getDockerSummary());
+  } catch (e) {
+    console.error('Docker query failed:', e.message);
+    throw new HttpError(503, 'Could not reach Docker. Is the socket mounted and readable?');
+  }
+});
+
+/*
+const cache = { at: 0, data: null, pending: null };
+
+async function buildSummary() {
+  const [info, list] = await Promise.all([
+    dockerGet('/info'),
+    dockerGet('/containers/json'),            // running containers only
+  ]);
+
+  const shown = list.slice(0, MAX_CONTAINERS);
+  const stats = await Promise.allSettled(
+    shown.map(c => dockerGet(`/containers/${c.Id}/stats?stream=false`))
+  );
+
+  const containers = shown.map((c, i) => ({
+    id: c.Id.slice(0, 12),
+    name: (c.Names?.[0] || c.Id).replace(/^\//, ''),
+    image: c.Image,
+    state: c.State,
+    status: c.Status,
+    ...(stats[i].status === 'fulfilled'
+      ? summariseStats(stats[i].value, info.NCPU)
+      : { cpu: null, memUsage: null, memLimit: null, memPct: null, netRx: null, netTx: null, pids: null }),
+  }));
+
+  return {
+    host: {
+      version: info.ServerVersion,
+      os: info.OperatingSystem,
+      cpus: info.NCPU,
+      memTotal: info.MemTotal,
+      running: info.ContainersRunning,
+      total: info.Containers,
+      images: info.Images,
+    },
+    truncated: list.length > shown.length,
+    containers,
+    at: Date.now(),
+  };
+}
+
 dockerRouter.get('/summary', getUser, requireAdmin, async (_req, res) => {
   if (cache.data && Date.now() - cache.at < CACHE_MS) return res.json(cache.data);
 
@@ -130,4 +190,4 @@ dockerRouter.get('/summary', getUser, requireAdmin, async (_req, res) => {
     console.error('Docker query failed:', e.message);
     throw new HttpError(503, 'Could not reach Docker. Is the socket mounted and readable?');
   }
-});
+});*/

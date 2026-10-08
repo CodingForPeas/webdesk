@@ -1380,3 +1380,32 @@ html, body {
 .dkr-fill { height: 100%; width: 0; background: linear-gradient(to right, #7efde3, #c7fe42); transition: width .4s ease; }
 .dkr-fill[data-level="mid"]  { background: linear-gradient(to right, #ffd166, #ffb347); }
 .dkr-fill[data-level="high"] { background: linear-gradient(to right, #ff9091, #ff5d73); }
+
+/* ============================================================
+   SYSTEM MONITOR
+   ============================================================ */
+#sysmon {
+  position: fixed; bottom: 40px; right: 16px;
+  width: 220px; padding: 12px 14px;
+  z-index: 0; pointer-events: none;
+  border-radius: 14px;
+  background: rgba(2, 8, 20, 0.35);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  font-size: 11px; font-weight: 300; letter-spacing: 1px;
+}
+#sysmon[hidden] { display: none; }
+.sm-row + .sm-row { margin-top: 10px; }
+.sm-head { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: 2px; }
+.sm-val { color: var(--text-accent); }
+.sm-sub { margin-top: 3px; font-size: 9px; color: var(--text-muted); }
+.sm-spark { display: block; width: 100%; height: 22px; margin-top: 5px; overflow: visible; }
+.sm-line {
+  fill: none;
+  stroke: var(--aui-teal);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.sm-area { fill: rgba(0, 255, 200, 0.10); stroke: none; }
